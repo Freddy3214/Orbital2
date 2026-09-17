@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#081018" />
+    <title>Orbital Foundry</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="starfield" aria-hidden="true"></div>
+    <div id="app" class="app-shell is-hidden">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">OF</div>
+          <div><span>ORBITAL</span><strong>FOUNDRY</strong></div>
+        </div>
+        <div id="resource-ticker" class="resource-ticker"></div>
+        <div class="commander"><span class="status-dot"></span><span id="commander-name"></span><button class="icon-button" id="save-button" title="Jetzt speichern">↻</button><button class="icon-button" id="logout-button" title="Abmelden">⇥</button></div>
+      </header>
+
+      <aside class="sidebar">
+        <div class="planet-card">
+          <span class="eyebrow">HEIMATWELT</span>
+          <strong>Vesta Prime</strong>
+          <span>G 02 · Sektor 17 · Orbit 04</span>
+        </div>
+        <nav id="nav" aria-label="Spielbereiche">
+          <button data-view="overview" class="active"><span>◉</span> Kommando</button>
+          <button data-view="buildings"><span>▦</span> Infrastruktur</button>
+          <button data-view="research"><span>⌬</span> Forschung</button>
+          <button data-view="shipyard"><span>➤</span> Werft</button>
+          <button data-view="galaxy"><span>✦</span> Galaxie</button>
+          <button data-view="log"><span>≡</span> Ereignislog</button>
+        </nav>
+        <div class="sidebar-footer"><span>SERVER</span><strong>EU-TEST-01</strong><small id="save-state">verbunden</small></div>
+      </aside>
+
+      <main id="content" class="content" tabindex="-1"></main>
+    </div>
+
+    <div id="toast-region" class="toast-region" aria-live="polite"></div>
+    <div id="commander-gate" class="commander-gate">
+      <div class="gate-orbit orbit-one"></div><div class="gate-orbit orbit-two"></div>
+      <section class="gate-card">
+        <div class="gate-logo">OF</div>
+        <div class="auth-switch" role="tablist" aria-label="Zugang auswählen"><button class="active" data-auth-mode="register" role="tab">Registrieren</button><button data-auth-mode="login" role="tab">Anmelden</button></div>
+        <p class="eyebrow" id="gate-eyebrow">NEUER KOMMANDOKANAL</p>
+        <h1 id="gate-title">Deine erste Welt wartet.</h1>
+        <p id="gate-copy">Lege einen Kommandantenaccount an. Dein Fortschritt bleibt auf dem Spielserver gespeichert.</p>
+        <label for="commander-input">Kommandantenname</label>
+        <input id="commander-input" minlength="3" maxlength="20" placeholder="z. B. Nova" autocomplete="username" />
+        <label for="password-input">Passwort</label>
+        <input id="password-input" minlength="8" maxlength="128" type="password" placeholder="mindestens 8 Zeichen" autocomplete="new-password" />
+        <button id="start-button" class="primary-button">Account erstellen <span>→</span></button>
+        <small id="auth-note">Passwörter werden nicht im Browser gespeichert. Der Server speichert nur einen sicheren Prüfwert.</small>
+      </section>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
