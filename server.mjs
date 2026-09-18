@@ -6,6 +6,7 @@ import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
+import { FLEET, DEFENSE } from "./public/units.js";
 
 const scrypt = promisify(scryptCallback);
 const root = dirname(fileURLToPath(import.meta.url));
@@ -125,8 +126,10 @@ async function updateAccountState(key, state) {
   if (asWholeNumber(state.revision) !== asWholeNumber(previous.state.revision)) fail("Der Spielstand hat sich geändert. Bitte synchronisieren.", 409);
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
+  const incomingDefenses = new Map(state.planets.map(p=>[p.id,p.defenses || {}]));
   state.planets = state.planets.filter(p => !String(p.id).startsWith("frontier-"));
-  state.planets.push(...previous.state.planets.filter(p => String(p.id).startsWith("frontier-")));
+  state.planets.push(...previous.state.planets.filter(p => String(p.id).startsWith("frontier-")).map(p=>({ ...p, defenses: incomingDefenses.get(p.id) || p.defenses || {} })));
+  for (const planet of state.planets) planet.defenses = Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(planet.defenses?.[key])]));
   state.revision = asWholeNumber(previous.state.revision) + 1;
   if (pool) {
     await pool.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(state)]);
@@ -182,8 +185,12 @@ function activeGalaxyAccount(account) {
 function signalId(account) { return `${account.id}:${primaryPlanet(account).id}`; }
 function galaxyPosition(account) {
   const planet = primaryPlanet(account);
-  const site = frontierSites.find(site => site.id === planet.id);
-  if (site) return site.position;
+    const site = frontierSites.find(site => site.id === planet.id);
+  if (site) {
+    if (planet.position) return planet.position;
+    const i = Number(planet.id.slice(9));
+    return { x:5+(i%10)*9+(i*7%5), y:5+Math.floor(i/10)*9+(i*3%5) };
+  }
   const seed = stableHash(`${account.id}:${planet.id || "home"}`);
   return {
     x: 5 + seed % 91,
@@ -193,7 +200,20 @@ function galaxyPosition(account) {
 function galaxyDistance(left, right) {
   return Math.round(Math.hypot(left.x - right.x, left.y - right.y) * 10) / 10;
 }
-const frontierSites = Array.from({ length: 100 }, (_, i) => ({ id: `frontier-${i}`, signature: `Kepler ${i + 1}`, position: { x: 5 + (i % 10) * 9 + (i * 7 % 5), y: 5 + Math.floor(i / 10) * 9 + (i * 3 % 5) }, free: true }));
+const frontierSites = (() => {
+  let seed = 732194;
+  const random = () => { seed = (Math.imul(seed,1664525)+1013904223) >>> 0; return seed/4294967296; };
+  const sites = [];
+  for (let i=0;i<140;i++) {
+    let position;
+    for (let attempt=0;attempt<200;attempt++) {
+      position = {x:3+random()*94,y:3+random()*94};
+      if (sites.every(s=>Math.hypot(s.position.x-position.x,s.position.y-position.y)>3)) break;
+    }
+    sites.push({id:`frontier-${i}`,signature:`Kepler ${i+1}`,position,free:true});
+  }
+  return sites;
+})();
 async function colonizeSite(key, targetId) {
   const site = frontierSites.find(site => site.id === targetId);
   if (!site) fail("Keine besiedelbare Welt.", 404);
@@ -205,6 +225,8 @@ async function colonizeSite(key, targetId) {
     const types = [["temperate","Gemäßigte Welt"],["arid","Wüstenwelt"],["ocean","Ozeanwelt"],["ice","Eiswelt"],["volcanic","Vulkanwelt"]];
     const [type, classification] = types[randomBytes(1)[0] % types.length];
     const planet = { id: site.id, name: site.signature, type, classification, fields: 96 + randomBytes(4).readUInt32BE() % 295, usedFields: 0, coordinates: `X ${site.position.x} · Y ${site.position.y}`, colonizedAt: Date.now(), homeworld: false };
+    planet.position = { ...site.position };
+    planet.defenses = {};
     account.state.ships.colonyShip -= 1;
     account.state.planets.push(planet);
     account.state.activePlanetId = planet.id;
@@ -268,8 +290,11 @@ function spyReportFor(attacker, defender, probeCount) {
   attacker.state.lastSpyAt = Date.now();
   const attackerSensors = asWholeNumber(attacker.state.research?.deepSpaceSensors);
   const defenderSensors = asWholeNumber(defender.state.research?.deepSpaceSensors);
-  const intelligence = Math.max(1, Math.min(4, 1 + Math.floor((attackerSensors - defenderSensors + Math.log2(used + 1)) / 3)));
-  const interceptionRisk = Math.max(.03, Math.min(.72, .08 + defenderSensors * .006 - Math.log2(used + 1) * .018));
+  const defenses = primaryPlanet(defender).defenses || {};
+  const jammer = Math.min(12, asWholeNumber(defenses.sensorJammer));
+  const intelligence = Math.max(1, Math.min(4, 1 + Math.floor((attackerSensors - defenderSensors - jammer + Math.log2(used + 1)) / 3)));
+  const antiSpy = Object.entries(DEFENSE).reduce((sum,[key,item])=>sum+asWholeNumber(defenses[key])*item.antiSpy,0);
+  const interceptionRisk = Math.max(.03, Math.min(.92, .08 + defenderSensors * .006 + antiSpy - Math.log2(used + 1) * .018));
   const lost = Math.random() < interceptionRisk ? Math.max(1, Math.floor(used * Math.min(.7, interceptionRisk + .12))) : 0;
   attacker.state.ships.spyProbe = available - lost;
   const planet = primaryPlanet(defender);
@@ -293,6 +318,7 @@ function spyReportFor(attacker, defender, probeCount) {
     ships: intelligence >= 2 ? Object.fromEntries(Object.entries(defender.state.ships || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
     buildings: intelligence >= 3 ? Object.fromEntries(Object.entries(defender.state.buildings || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
     research: intelligence >= 4 ? Object.fromEntries(Object.entries(defender.state.research || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
+    defenses: intelligence >= 3 ? Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(defenses[key])])) : null,
   };
   attacker.state.spyReports = [report, ...(Array.isArray(attacker.state.spyReports) ? attacker.state.spyReports : []).filter((entry) => Number(entry.expiresAt) > Date.now())].slice(0, 20);
   addStateLog(attacker.state, "scan", `Aufklärung von ${report.signature} abgeschlossen. Informationsstufe ${intelligence}/4${lost ? ` · ${lost} Sonde verloren` : ""}.`);
@@ -302,25 +328,24 @@ function spyReportFor(attacker, defender, probeCount) {
 function prepareRaid(attacker, defender, rawFleet) {
   if (!targetIsVisible(attacker, defender)) fail("Dieses Ziel ist nicht verfügbar.", 404);
   if (!recentSpyReport(attacker.state, signalId(defender))) fail("Klär das Ziel zuerst mit Sonden auf.", 409);
-  const fleet = {
-    cargoDrone: Math.min(asWholeNumber(rawFleet?.cargoDrone), asWholeNumber(attacker.state.ships?.cargoDrone)),
-    interceptor: Math.min(asWholeNumber(rawFleet?.interceptor), asWholeNumber(attacker.state.ships?.interceptor)),
-  };
-  if (!fleet.cargoDrone && !fleet.interceptor) {
-    const error = new Error("Wähle mindestens eine Frachtdrohne oder einen Interzeptor.");
+  const fleet = Object.fromEntries(Object.keys(FLEET).map(key=>[key,Math.min(asWholeNumber(rawFleet?.[key]),asWholeNumber(attacker.state.ships?.[key]))]));
+  if (!Object.values(fleet).some(Boolean)) {
+    const error = new Error("Wähle mindestens ein Transport- oder Kampfschiff.");
     error.status = 400;
     throw error;
   }
   const attackerAvionics = asWholeNumber(attacker.state.research?.avionics);
   const defenderAvionics = asWholeNumber(defender.state.research?.avionics);
-  const attackPower = Math.floor((fleet.interceptor * 45 + fleet.cargoDrone * 4) * (1 + attackerAvionics * 0.08));
+  const attackPower = Math.floor(Object.entries(FLEET).reduce((sum,[key,item])=>sum+fleet[key]*item.power,0) * (1 + attackerAvionics * 0.08));
   const defenderShips = defender.state.ships || {};
   const defenderBuildings = defender.state.buildings || {};
-  const defenseBase = asWholeNumber(defenderShips.interceptor) * 45 + asWholeNumber(defenderShips.cargoDrone) * 4
+  const planetDefenses = primaryPlanet(defender).defenses || {};
+  const defenseBase = Object.entries(FLEET).reduce((sum,[key,item])=>sum+asWholeNumber(defenderShips[key])*item.power,0)
+    + Object.entries(DEFENSE).reduce((sum,[key,item])=>sum+asWholeNumber(planetDefenses[key])*item.power,0)
     + asWholeNumber(defenderBuildings.commandCenter) * 10 + asWholeNumber(defenderBuildings.shipyard) * 6;
   const defensePower = Math.max(25, Math.floor(defenseBase * (1 + defenderAvionics * 0.05)));
   const won = attackPower >= defensePower;
-  const capacity = fleet.cargoDrone * 850 + fleet.interceptor * 120;
+  const capacity = Object.entries(FLEET).reduce((sum,[key,item])=>sum+fleet[key]*item.cargo,0);
   const loot = { metal: 0, crystal: 0, tritium: 0 };
   if (won) {
     let remainingCapacity = capacity;
@@ -334,8 +359,16 @@ function prepareRaid(attacker, defender, rawFleet) {
     }
   }
   const survivorFactor = won ? 0.88 : 0.25;
-  attacker.state.ships.cargoDrone = asWholeNumber(attacker.state.ships?.cargoDrone) - fleet.cargoDrone + Math.floor(fleet.cargoDrone * survivorFactor);
-  attacker.state.ships.interceptor = asWholeNumber(attacker.state.ships?.interceptor) - fleet.interceptor + Math.floor(fleet.interceptor * survivorFactor);
+  const losses = {};
+  for (const key of Object.keys(FLEET)) {
+    losses[key] = fleet[key] - Math.floor(fleet[key] * survivorFactor);
+    attacker.state.ships[key] = asWholeNumber(attacker.state.ships[key]) - losses[key];
+  }
+  const defenseLosses = {};
+  if (won) for (const key of Object.keys(DEFENSE)) {
+    defenseLosses[key] = Math.ceil(asWholeNumber(planetDefenses[key]) * .25);
+    planetDefenses[key] = asWholeNumber(planetDefenses[key]) - defenseLosses[key];
+  }
   const lootText = RESOURCE_KEYS.filter((key) => loot[key]).map((key) => `${loot[key]} ${key}`).join(", ") || "keine Beute";
   addStateLog(attacker.state, won ? "mission" : "combat", won
     ? `Raubzug gegen ${defender.username} erfolgreich. Erbeutet: ${lootText}.`
@@ -343,7 +376,7 @@ function prepareRaid(attacker, defender, rawFleet) {
   addStateLog(defender.state, won ? "combat" : "mission", won
     ? `${attacker.username} hat einen Raubzug geflogen und ${lootText} entwendet.`
     : `${attacker.username} hat einen Raubzug geflogen, aber deine Verteidigung hielt stand.`);
-  return { won, fleet, loot, attackPower, defensePower };
+  return { won, fleet, loot, attackPower, defensePower, losses, defenseLosses };
 }
 async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
   const separator = targetId.indexOf(":");
