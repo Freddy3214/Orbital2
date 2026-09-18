@@ -36,7 +36,7 @@ const mimeTypes = {
 
 const defaultState = (commander) => ({
   version: 3, commander, createdAt: Date.now(),
-  resources: { metal: 2600, crystal: 1600, tritium: 500, lastUpdate: Date.now() },
+  resources: { metal: 20000, crystal: 10000, tritium: 5000, lastUpdate: Date.now() },
   buildings: {
     commandCenter: 1, metalMine: 1, crystalMine: 0, tritiumSynthesizer: 0, solarPlant: 1,
     roboticsFactory: 0, researchLab: 0, shipyard: 0, metalStorage: 0, crystalStorage: 0, tritiumStorage: 0,
