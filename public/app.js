@@ -106,6 +106,10 @@ const RESEARCH = {
   },
 };
 
+BUILDINGS.solarPlant.image = "https://images.pexels.com/photos/11455626/pexels-photo-11455626.jpeg?auto=compress&w=600";
+BUILDINGS.crystalMine.image = "https://upload.wikimedia.org/wikipedia/commons/a/ae/Amethyst_crystals_close.jpg";
+BUILDINGS.researchLab.image = "https://images.unsplash.com/photo-1617155093730-a8bf47be792d?auto=format&fit=crop&w=600&q=75";
+for (const item of Object.values(RESEARCH)) if (item.image.includes("research-lab")) item.image = BUILDINGS.researchLab.image;
 const SHIPS = {
   spyProbe: {
     icon: "◉", image: "/assets/sensor-array.svg", name: "Aufklärsonde", cost: { metal: 80, crystal: 180, tritium: 25 },
@@ -474,7 +478,7 @@ async function fetchLeaderboard() {
     const response = await fetch("/api/leaderboard");
     if (!response.ok) return;
     leaderboard = await response.json();
-    if (activeView === "overview") render();
+    if (["overview", "ranking"].includes(activeView)) render();
   } catch { /* The game remains usable when the leaderboard endpoint is unavailable. */ }
 }
 
@@ -737,13 +741,59 @@ function reportSection(title, values, catalog) {
   if (!values) return `<div class="intel-locked"><span>◌</span> ${title} · höhere Aufklärung erforderlich</div>`;
   return `<section class="intel-section"><h3>${title}</h3><div class="intel-values">${Object.entries(values).map(([key, value]) => `<div><span>${escapeHtml(catalog[key]?.name || catalog[key] || key)}</span><strong>${formatNumber(value)}</strong></div>`).join("")}</div></section>`;
 }
+async function colonizeTarget(targetId) {
+  if (actionBusy || isSaving) { toast("Speicherung läuft – bitte gleich erneut versuchen."); return; }
+  actionBusy = true;
+  try {
+    if (!await save({ quiet: true })) return;
+    const response = await fetch("/api/colonize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetId }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Besiedlung fehlgeschlagen.");
+    state = payload.state;
+    ensureStateShape();
+    selectedSignalId = null;
+    galaxyOffset = { x: 0, y: 0 };
+    toast(`${payload.planet.name} besiedelt · ${payload.planet.fields} Baufelder`);
+  } catch (error) { toast(error.message, true); }
+  finally { actionBusy = false; await fetchGalaxy({ force: true }); render(); }
+}
+function tablePanel(title, headings, rows) {
+  return `<section class="view-heading"><h1>${title}</h1></section><section class="contact-console"><table><thead><tr>${headings.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></section>`;
+}
+function rankingView() {
+  return tablePanel("Rangliste · alle Kommandanten", ["Rang", "Kommandant", "Punktzahl", "Planeten"], leaderboard.map((p, i) => `<tr class="${p.commander === state.commander ? "selected" : ""}"><td>${i + 1}</td><td>${escapeHtml(p.commander)}</td><td>${formatNumber(p.score)}</td><td>${p.planets}</td></tr>`)) + `<p class="view-note">Punkte: 12 × Stufe² je Gebäude/Forschung + 4 je Schiff. Aktuell ${leaderboard.length} Spieler.</p>`;
+}
+function economyView() {
+  const rates = production();
+  return tablePanel("Wirtschaft", ["Rohstoff", "Vorrat", "Produktion / Stunde", "Lagerkapazität"], Object.keys(RESOURCE_LABELS).map(key => `<tr><td>${RESOURCE_LABELS[key]}</td><td>${formatNumber(state.resources[key])}</td><td>+${formatNumber(rates[key])}</td><td>${formatNumber(storageCap(key))}</td></tr>`)) + `<p class="view-note">Energieeffizienz: ${Math.round(energyStats().efficiency * 100)} %. Wirtschaft und Flottenbestand werden derzeit zwischen deinen Planeten geteilt.</p>`;
+}
+function statisticsView() {
+  const categories = [["Gebäude", Object.values(state.buildings).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
+  return tablePanel("Spielerstatistik", ["Bereich", "Punkte"], categories.map(([name,value]) => `<tr><td>${name}</td><td>${formatNumber(value)}</td></tr>`));
+}
+function fleetsView() {
+  return tablePanel("Flottenbefehle", ["Schiff", "Verfügbar"], Object.entries(SHIPS).map(([key,item]) => `<tr><td>${item.name}</td><td>${formatNumber(state.ships[key])}</td></tr>`)) + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section><p class="view-note">Spionage, Angriffe und gezielte Besiedlung: Ziel im Sonnensystem auswählen.</p>`;
+}
+function techtreeView() {
+  return tablePanel("Technologiebaum", ["Technologie / Einheit", "Voraussetzungen", "Status"], [...Object.values(BUILDINGS), ...Object.values(RESEARCH), ...Object.values(SHIPS)].map(item => {
+    const requirements = item.requires ? item.requires(state) : [];
+    return `<tr><td>${item.name}</td><td>${requirements.map(r=>`${r.ok ? "✓" : "○"} ${escapeHtml(r.text)}`).join("<br>") || "Keine"}</td><td>${requirements.every(r=>r.ok) ? "Freigeschaltet" : "Gesperrt"}</td></tr>`;
+  }));
+}
+function helpView() {
+  return `<section class="view-heading"><h1>Hilfe & Bildnachweise</h1></section><section class="panel panel-inner"><h2>Sternenkarte</h2><p>Jeder weiße Stern ist ein auswählbares Ziel. Freie Welten lassen sich mit einem Kolonieschiff besiedeln. Besetzte Welten können ausgespäht und mit gültigem Spionagebericht angegriffen werden. Die Größe freier Welten (96–390 Felder) bleibt bis zur Besiedlung verborgen.</p><h2>Fotografien</h2><p>Solaranlage: <a href="https://www.pexels.com/photo/close-up-of-solar-panels-11455626/" target="_blank" rel="noopener noreferrer">Tobi &Chris / Pexels</a> · Pexels-Lizenz.<br>Kristalle: <a href="https://commons.wikimedia.org/wiki/File:Amethyst_crystals_close.jpg" target="_blank" rel="noopener noreferrer">Lisa Ann Yount / Wikimedia Commons</a> · CC0.<br>Labor: <a href="https://unsplash.com/photos/gloved-hand-holding-laboratory-beaker-cuqp2Jzz_lY" target="_blank" rel="noopener noreferrer">RephiLe water / Unsplash</a> · Unsplash-Lizenz.</p><p>Fotos werden von den jeweiligen Bildanbietern geladen. Bei Ladeproblemen erscheinen die vorhandenen Illustrationen.</p></section>`;
+}
+content.addEventListener("error", (event) => {
+  if (event.target.tagName === "IMG" && event.target.src.startsWith("https://")) event.target.src = "/assets/research-lab.svg";
+}, true);
 function galaxyInspector() {
   const signal = galaxyIntel.find((contact) => contact.id === selectedSignalId);
+  if (signal?.free) return `<aside class="galaxy-inspector"><span class="eyebrow">FREIE WELT · ${galaxyCoordinates(signal.position)}</span><h2>${escapeHtml(signal.signature)}</h2><p>Unbesiedelt · ${signal.distance} Sektoren entfernt. Größe und Beschaffenheit werden erst bei der Besiedlung bekannt.</p><p>Ein Kolonieschiff wird verbraucht. Die Besiedlung wird derzeit sofort abgeschlossen.</p><button class="primary-button" data-colonize="${escapeHtml(signal.id)}" ${!state.ships.colonyShip || actionBusy ? "disabled" : ""}>${state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button><p>Spionage und Angriffe sind nur bei besetzten Welten verfügbar.</p></aside>`;
   if (!signal) return `<aside class="galaxy-inspector"><span class="eyebrow">SIGNALANALYSE</span><div class="scanner-symbol">◎</div><h2>Was liegt im Dunkeln?</h2><p>Wähle einen weißen Punkt. Der Name gehört zur Welt; ihr Besitzer bleibt bis zur erfolgreichen Aufklärung unbekannt.</p><p>Erforsche Tiefraumsensorik, um deinen Sichtkreis zu erweitern. Baue Aufklärsonden in der Werft.</p><div class="sensor-stat"><span>Aufklärsonden</span><strong>${state.ships.spyProbe}</strong></div></aside>`;
   const report = currentReport(signal.id);
   const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
   return `<aside class="galaxy-inspector"><span class="eyebrow">ZIEL ERFASST · ${galaxyCoordinates(signal.position)}</span><h2>${escapeHtml(signal.signature)}</h2><p>${signal.distance} Sektoren entfernt · fremde Welt</p>
-  <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(signal.id)}" ${!report || actionBusy || !(state.ships.cargoDrone || state.ships.interceptor) ? "disabled" : ""}>Schnellraubzug · bis zu 5 Frachter + 3 Jäger</button></div>
+  <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(signal.id)}" ${!report || actionBusy || !(state.ships.cargoDrone || state.ships.interceptor) ? "disabled" : ""}>Angreifen · bis zu 5 Frachter + 3 Jäger</button></div>
   ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/4</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString("de-DE")} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
   </aside>`;
 }
@@ -755,21 +805,18 @@ function galaxyView() {
   const origin = point(galaxyOrigin);
   const selected = galaxyIntel.find(signal => signal.id === selectedSignalId);
   const target = selected ? point(selected.position) : null;
-  const stars = Array.from({ length: 1600 }, (_, i) => {
-    const p = point({ x: ((i * 127.13 + Math.sin(i * 41) * 19) % 100 + 100) % 100, y: ((i * 73.71 + Math.cos(i * 17) * 31) % 100 + 100) % 100 });
-    return `<circle cx="${p.x}" cy="${p.y}" r="${i % 11 === 0 ? .12 : .045}" fill="white" opacity="${.25 + (i % 7) / 10}"/>`;
-  }).join("");
+  const stars = "";
   const space = `<svg class="survey-field" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="survey-window"><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}"/></clipPath></defs><g clip-path="url(#survey-window)"><rect width="100" height="100" fill="#020309"/>${stars}</g><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}" fill="none" stroke="#73ae82" stroke-width=".12"/><path d="M ${origin.x} 0 V 100 M 0 ${origin.y} H 100" stroke="#59ba73" stroke-width=".12"/>${target ? `<path d="M ${target.x} 0 V 100 M 0 ${target.y} H 100" stroke="#e16e87" stroke-width=".15"/>` : ""}</svg>`;
   const markers = galaxyIntel.map((signal) => {
     const p = point(signal.position);
     if (p.x < 2 || p.x > 97 || p.y < 3 || p.y > 95) return "";
-    return `<button class="signal-point ${signal.id === selectedSignalId ? "selected" : ""}" style="left:${p.x}%;top:${p.y}%" data-signal-id="${escapeHtml(signal.id)}" aria-label="Planet ${escapeHtml(signal.signature)} bei ${galaxyCoordinates(signal.position)}"><i></i><span>${escapeHtml(signal.signature)}</span></button>`;
+    return `<button class="signal-point ${signal.free ? "free-signal" : "occupied-signal"} ${signal.id === selectedSignalId ? "selected" : ""}" style="left:${p.x}%;top:${p.y}%" data-signal-id="${escapeHtml(signal.id)}" aria-label="${signal.free ? "Freie Welt" : "Besetzte Welt"} ${escapeHtml(signal.signature)} bei ${galaxyCoordinates(signal.position)}"><i></i><span>${escapeHtml(signal.signature)}</span></button>`;
   }).join("");
   return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Grau: unerforscht · Grün: aktive Welt · Rot: ausgewähltes Ziel</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
   <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="home">Heimat zentrieren</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
-  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SIGNALE<small>Benannte Punkte sind echte Welten. Unbeschriftete Sterne bilden den Hintergrund.</small></div></section>${galaxyInspector()}</div>
-  <section class="contact-console"><div class="panel-title"><h2>Erfasste Welten</h2><span>${galaxyIntel.length} KONTAKTE</span></div><table><thead><tr><th>Planet</th><th>X : Y</th><th>Entfernung</th><th>Aufklärung</th></tr></thead><tbody>${galaxyIntel.map(signal => `<tr class="${signal.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(signal.id)}">${escapeHtml(signal.signature)}</button></td><td>${galaxyCoordinates(signal.position)}</td><td>${signal.distance} Sektoren</td><td>${currentReport(signal.id) ? "Bericht verfügbar" : "Unbekannt"}</td></tr>`).join("") || `<tr><td colspan="4">Keine fremden Welten im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
+  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SIGNALE<small>Jeden weißen Stern anklicken: freie Welt besiedeln oder besetzte Welt aufklären.</small></div></section>${galaxyInspector()}</div>
+  <section class="contact-console"><div class="panel-title"><h2>Erfasste Welten</h2><span>${galaxyIntel.length} KONTAKTE</span></div><table><thead><tr><th>Planet</th><th>X : Y</th><th>Entfernung</th><th>Aufklärung</th></tr></thead><tbody>${galaxyIntel.map(signal => `<tr class="${signal.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(signal.id)}">${escapeHtml(signal.signature)}</button></td><td>${galaxyCoordinates(signal.position)}</td><td>${signal.distance} Sektoren</td><td>${signal.free ? "Frei · besiedelbar" : currentReport(signal.id) ? "Bericht verfügbar" : "Besetzt"}</td></tr>`).join("") || `<tr><td colspan="4">Keine fremden Welten im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
   <section class="panel galaxy-flight-panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenbewegungen</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section>
   <section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Expeditionen & Kolonisierung</h2><span>NEUTRALE ZIELE</span></div>${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
 }
@@ -797,7 +844,7 @@ function render() {
   if (document.activeElement !== planetSwitch) planetSwitch.innerHTML = state.planets.map(planet => `<option value="${escapeHtml(planet.id)}" ${planet.id === activePlanet().id ? "selected" : ""}>${escapeHtml(planet.name)}</option>`).join("");
   $(".planet-card strong").textContent = activePlanet().name;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
-  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, galaxy: galaxyView, log: logView };
+  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, galaxy: galaxyView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   content.innerHTML = views[activeView]();
 }
 
@@ -884,13 +931,15 @@ $("#nav").addEventListener("click", (event) => {
   render();
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
-  if (activeView === "overview") fetchLeaderboard();
+  if (["overview", "ranking"].includes(activeView)) fetchLeaderboard();
   if (activeView === "galaxy") fetchGalaxy({ force: true });
 });
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
-  if (!button || button.disabled || actionBusy || isSaving) return;
+  if (!button || button.disabled) return;
   if (button.dataset.signalId) { selectedSignalId = button.dataset.signalId; render(); return; }
+  if (button.dataset.colonize) { colonizeTarget(button.dataset.colonize); return; }
+  if (actionBusy || isSaving) { toast("Speicherung läuft – bitte gleich erneut versuchen."); return; }
   if (button.dataset.spyTarget) { spyTarget(button.dataset.spyTarget, Number(button.dataset.probes)); return; }
   if (button.dataset.mapAction) {
     const action = button.dataset.mapAction;
