@@ -255,7 +255,7 @@ async function colonizeSite(key, targetId) {
 }
 function sensorRange(account) {
   const level = asWholeNumber(account.state?.research?.deepSpaceSensors);
-  return Math.min(92, 14 + level * .78);
+  return Math.min(150, 14 + level * 1.36);
 }
 function targetIsVisible(attacker, defender) {
   return galaxyDistance(galaxyPosition(attacker), galaxyPosition(defender)) <= sensorRange(attacker);
@@ -270,9 +270,65 @@ function publicGalaxyRecord(account, observer = null) {
   return {
     id: signalId(account),
     signature: String(planet.name || "Unbenannte Signatur").slice(0, 36),
+    owner: String(account.username || "Unbekannt").slice(0, 36),
     position,
     distance: observer ? galaxyDistance(galaxyPosition(observer), position) : null,
   };
+}
+function galaxySystems(contacts, observer) {
+  const cellSize = 18;
+  const buckets = new Map();
+  for (const contact of contacts) {
+    const cellX = Math.floor(Math.max(0, Math.min(99.999, contact.position.x)) / cellSize);
+    const cellY = Math.floor(Math.max(0, Math.min(99.999, contact.position.y)) / cellSize);
+    const key = `${cellX}-${cellY}`;
+    if (!buckets.has(key)) buckets.set(key, { cellX, cellY, contacts: [] });
+    buckets.get(key).contacts.push(contact);
+  }
+  const systems = [];
+  for (const [key, bucket] of buckets) {
+    const ordered = [...bucket.contacts].sort((a, b) => stableHash(a.id) - stableHash(b.id));
+    for (let offset = 0; offset < ordered.length; offset += 13) {
+      const chunk = ordered.slice(offset, offset + 13);
+      const part = Math.floor(offset / 13);
+      const systemKey = `${key}-${part}`;
+      const seed = stableHash(`orbital-system:${systemKey}`);
+      const jitterX = (seed % 801) / 100 - 4;
+      const jitterY = (Math.floor(seed / 809) % 801) / 100 - 4;
+      const position = {
+        x: Math.max(3, Math.min(97, bucket.cellX * cellSize + cellSize / 2 + jitterX)),
+        y: Math.max(3, Math.min(97, bucket.cellY * cellSize + cellSize / 2 + jitterY)),
+      };
+      const slots = Array.from({ length: 13 }, (_, index) => ({ position: index + 1, empty: true }));
+      for (const contact of chunk) {
+        let index = stableHash(`orbit:${contact.id}`) % 13;
+        while (!slots[index].empty) index = (index + 1) % 13;
+        slots[index] = {
+          position: index + 1,
+          targetId: contact.id,
+          name: contact.signature,
+          owner: contact.free ? null : contact.owner,
+          free: Boolean(contact.free),
+          empty: false,
+        };
+      }
+      const occupiedCount = chunk.filter((contact) => !contact.free).length;
+      const freeCount = chunk.length - occupiedCount;
+      systems.push({
+        id: `system-${systemKey}`,
+        signature: `Sektor ${String(100 + seed % 900).padStart(3, "0")}-${String.fromCharCode(65 + (Math.floor(seed / 997) % 26))}`,
+        position,
+        distance: galaxyDistance(galaxyPosition(observer), position),
+        planetCount: chunk.length,
+        occupiedCount,
+        freeCount,
+        luminosity: Math.min(1, .34 + chunk.length * .075),
+        starSize: Math.min(62, 30 + chunk.length * 3),
+        slots,
+      });
+    }
+  }
+  return systems.sort((a, b) => a.distance - b.distance || a.signature.localeCompare(b.signature, "de"));
 }
 function spyReportFor(attacker, defender, probeCount) {
   if (!targetIsVisible(attacker, defender)) fail("Dieses Ziel ist nicht verfügbar.", 404);
@@ -608,7 +664,7 @@ const server = createServer(async (request, response) => {
         .sort((a, b) => a.distance - b.distance).slice(0, 200);
       const claimed = new Set(accounts.flatMap(a => a.state.planets.map(p => p.id)));
       contacts.push(...frontierSites.filter(site => !claimed.has(site.id)).map(site => ({ ...site, distance: galaxyDistance(galaxyPosition(observer), site.position) })).filter(site => site.distance <= sensorRange(observer)));
-      return json(response, 200, { contacts, origin: galaxyPosition(observer), radius: sensorRange(observer), updatedAt: Date.now() });
+      return json(response, 200, { contacts, systems: galaxySystems(contacts, observer), origin: galaxyPosition(observer), radius: sensorRange(observer), updatedAt: Date.now() });
     }
     if (request.method === "POST" && url.pathname === "/api/colonize") {
       const current = await authenticatedAccount(request);
