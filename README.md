@@ -19,12 +19,15 @@ Beim ersten Besuch wird ein Kommandantenaccount mit Passwort angelegt; bestehend
 - Echtzeit- und Offline-Ressourcenproduktion mit Energieeffizienz
 - Sichere Registrierung, Anmeldung, Abmeldung und automatische Sitzungswiederherstellung
 - Bau-, Forschungs- und Werftaufträge mit sichtbarem Echtzeit-Countdown
-- Bau-Reihe für mehrere Gebäudestufen; Kosten und Baufelder werden beim Einreihen reserviert
+- Bau-Reihe für mehrere Gebäudestufen; Kosten werden beim Einreihen reserviert
+- Feste Maximalstufe 100 für jedes Gebäude und jede Forschung
 - Techtree mit Voraussetzungen
 - PvE-Missionen, Rückflug, Beute und Kampfbericht
 - Lokale Sci-Fi-Illustrationen für Gebäude, Schiffe und sechs planetare Biome (gemäßigt, arid, Ozean, Eis, vulkanisch, Gas)
-- Baufeld-System pro Planet: 96 bis 390 Felder bei neu besiedelten Welten, erst nach der Landung bekannt
+- Baufeld-System pro Planet: 96 bis 390 Felder bei neu besiedelten Welten, erst nach der Landung bekannt; ein Gebäudetyp belegt seine Felder nur beim Erstbau
 - Kolonieschiff und unkartierte Kolonisierungsmission als Risikomechanik
+- Direkt auswählbare Planeten-Registrierung
+- Galaxie-Ansicht mit Mehrspieler-Signaturen und serverseitig berechneten Schnellraubzügen inklusive Beute, Verlusten und Ereignisprotokoll
 - Lokales Mehrprofil-Ranking über die Server-API
 - Responsives Sci-Fi-Interface ohne externe Assets oder Tracker
 
@@ -40,4 +43,4 @@ Das Repository enthält eine `render.yaml`. In Render: **New +** → **Blueprint
 
 Wichtig: Der kostenlose Render-Postgres-Tarif ist nur zum Testen gedacht und läuft nach 30 Tagen ab. Für einen dauerhaften Start mit Freunden braucht die Datenbank anschließend einen bezahlten Tarif oder einen anderen Datenbankanbieter.
 
-Der Launch enthält echte Accounts, sichere Sitzungs-Cookies und Datenbank-Speicherung. Vor einer größeren öffentlichen Veröffentlichung sollten zusätzlich E-Mail-Verifikation bzw. Passwort-Reset, serverseitige Spielregel-Prüfung, Rate Limits, Backups, Monitoring sowie Datenschutz/Impressum ergänzt werden.
+Der Launch enthält echte Accounts, sichere Sitzungs-Cookies und Datenbank-Speicherung. Bau, Forschung und neutrale Missionen sind weiterhin ein schneller Prototypen-Ablauf; Mehrspieler-Raids werden hingegen bereits in einer Datenbank-Transaktion auf dem Server aufgelöst. Vor einer größeren öffentlichen Veröffentlichung sollten zusätzlich E-Mail-Verifikation bzw. Passwort-Reset, umfassende serverseitige Spielregel-Prüfung, Rate Limits, Backups, Monitoring sowie Datenschutz/Impressum ergänzt werden.

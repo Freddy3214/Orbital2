@@ -16,6 +16,8 @@ const { Pool } = pg;
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL }) : null;
 const sessions = new Map();
 const sessionLifetime = 1000 * 60 * 60 * 24 * 30;
+const LEVEL_CAP = 100;
+const RESOURCE_KEYS = ["metal", "crystal", "tritium"];
 const mimeTypes = {
   ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
@@ -128,6 +130,128 @@ async function allAccounts() {
   const database = await loadLocalDatabase();
   return Object.values(database.accounts);
 }
+async function accountById(id) {
+  if (pool) {
+    const result = await pool.query(
+      "SELECT id, username, created_at, password_salt, password_hash, state FROM accounts WHERE id = $1",
+      [id],
+    );
+    return result.rows[0] ? accountFromRow(result.rows[0]) : null;
+  }
+  const database = await loadLocalDatabase();
+  return Object.values(database.accounts).find((account) => account.id === id) || null;
+}
+function asWholeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : fallback;
+}
+function addStateLog(state, type, text) {
+  state.log = [{ at: Date.now(), type, text }, ...(Array.isArray(state.log) ? state.log : [])].slice(0, 80);
+}
+function publicGalaxyRecord(account) {
+  return {
+    id: account.id,
+    commander: account.username,
+    score: score(account.state),
+    planets: (account.state.planets || []).slice(0, 20).map((planet, index) => ({
+      id: String(planet.id || `planet-${index}`),
+      name: String(planet.name || `Kolonie ${index + 1}`),
+      type: String(planet.type || "temperate"),
+      classification: String(planet.classification || "Unbekannte Welt"),
+      coordinates: String(planet.coordinates || "Unkartierte Position"),
+      fields: Math.max(96, Math.min(390, asWholeNumber(planet.fields, 228))),
+    })),
+  };
+}
+function prepareRaid(attacker, defender, rawFleet) {
+  const fleet = {
+    cargoDrone: Math.min(asWholeNumber(rawFleet?.cargoDrone), asWholeNumber(attacker.state.ships?.cargoDrone)),
+    interceptor: Math.min(asWholeNumber(rawFleet?.interceptor), asWholeNumber(attacker.state.ships?.interceptor)),
+  };
+  if (!fleet.cargoDrone && !fleet.interceptor) {
+    const error = new Error("Wähle mindestens eine Frachtdrohne oder einen Interzeptor.");
+    error.status = 400;
+    throw error;
+  }
+  const attackerAvionics = asWholeNumber(attacker.state.research?.avionics);
+  const defenderAvionics = asWholeNumber(defender.state.research?.avionics);
+  const attackPower = Math.floor((fleet.interceptor * 45 + fleet.cargoDrone * 4) * (1 + attackerAvionics * 0.08));
+  const defenderShips = defender.state.ships || {};
+  const defenderBuildings = defender.state.buildings || {};
+  const defenseBase = asWholeNumber(defenderShips.interceptor) * 45 + asWholeNumber(defenderShips.cargoDrone) * 4
+    + asWholeNumber(defenderBuildings.commandCenter) * 10 + asWholeNumber(defenderBuildings.shipyard) * 6;
+  const defensePower = Math.max(25, Math.floor(defenseBase * (1 + defenderAvionics * 0.05)));
+  const won = attackPower >= defensePower;
+  const capacity = fleet.cargoDrone * 850 + fleet.interceptor * 120;
+  const loot = { metal: 0, crystal: 0, tritium: 0 };
+  if (won) {
+    let remainingCapacity = capacity;
+    for (const resource of RESOURCE_KEYS) {
+      const available = asWholeNumber(defender.state.resources?.[resource]);
+      const amount = Math.min(available, Math.floor(available * 0.15), remainingCapacity);
+      loot[resource] = amount;
+      remainingCapacity -= amount;
+      defender.state.resources[resource] = available - amount;
+      attacker.state.resources[resource] = asWholeNumber(attacker.state.resources?.[resource]) + amount;
+    }
+  }
+  const survivorFactor = won ? 0.88 : 0.25;
+  attacker.state.ships.cargoDrone = asWholeNumber(attacker.state.ships?.cargoDrone) - fleet.cargoDrone + Math.floor(fleet.cargoDrone * survivorFactor);
+  attacker.state.ships.interceptor = asWholeNumber(attacker.state.ships?.interceptor) - fleet.interceptor + Math.floor(fleet.interceptor * survivorFactor);
+  const lootText = RESOURCE_KEYS.filter((key) => loot[key]).map((key) => `${loot[key]} ${key}`).join(", ") || "keine Beute";
+  addStateLog(attacker.state, won ? "mission" : "combat", won
+    ? `Raubzug gegen ${defender.username} erfolgreich. Erbeutet: ${lootText}.`
+    : `Raubzug gegen ${defender.username} abgewehrt. Teile der Flotte gingen verloren.`);
+  addStateLog(defender.state, won ? "combat" : "mission", won
+    ? `${attacker.username} hat einen Raubzug geflogen und ${lootText} entwendet.`
+    : `${attacker.username} hat einen Raubzug geflogen, aber deine Verteidigung hielt stand.`);
+  return { won, fleet, loot, attackPower, defensePower };
+}
+async function executeRaid(attackerKey, targetId, rawFleet) {
+  if (pool) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const lockedAccounts = await client.query(
+        "SELECT id, account_key, username, created_at, password_salt, password_hash, state FROM accounts WHERE account_key = $1 OR id = $2 ORDER BY id FOR UPDATE",
+        [attackerKey, targetId],
+      );
+      const attackerRow = lockedAccounts.rows.find((row) => row.account_key === attackerKey);
+      const defenderRow = lockedAccounts.rows.find((row) => row.id === targetId);
+      if (!attackerRow || !defenderRow || attackerRow.id === defenderRow.id) {
+        const error = new Error("Dieses Ziel ist nicht verfügbar.");
+        error.status = 404;
+        throw error;
+      }
+      const attacker = accountFromRow(attackerRow);
+      const defender = accountFromRow(defenderRow);
+      const report = prepareRaid(attacker, defender, rawFleet);
+      await client.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [attackerKey, JSON.stringify(attacker.state)]);
+      await client.query("UPDATE accounts SET state = $2::jsonb WHERE id = $1", [defender.id, JSON.stringify(defender.state)]);
+      await client.query("COMMIT");
+      return { state: attacker.state, target: publicGalaxyRecord(defender), report };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  const database = await loadLocalDatabase();
+  const attacker = database.accounts[attackerKey];
+  const defenderEntry = Object.entries(database.accounts).find(([, account]) => account.id === targetId);
+  if (!attacker || !defenderEntry || attacker === defenderEntry[1]) {
+    const error = new Error("Dieses Ziel ist nicht verfügbar.");
+    error.status = 404;
+    throw error;
+  }
+  const [defenderKey, defender] = defenderEntry;
+  const report = prepareRaid(attacker, defender, rawFleet);
+  database.accounts[attackerKey] = attacker;
+  database.accounts[defenderKey] = defender;
+  await saveLocalDatabase(database);
+  return { state: attacker.state, target: publicGalaxyRecord(defender), report };
+}
 async function makePasswordRecord(password) {
   const salt = randomBytes(16).toString("base64url");
   const hash = await scrypt(password, salt, 64);
@@ -182,6 +306,10 @@ function saveableState(rawState, username) {
   const state = structuredClone(rawState);
   state.version = 2;
   state.commander = username;
+  for (const group of [state.buildings, state.research]) {
+    for (const key of Object.keys(group)) group[key] = Math.min(LEVEL_CAP, asWholeNumber(group[key]));
+  }
+  for (const resource of RESOURCE_KEYS) state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(state.resources[resource]));
   state.log = state.log.slice(0, 80);
   state.planets = state.planets.slice(0, 20);
   state.missions = state.missions.slice(0, 20);
@@ -284,11 +412,26 @@ const server = createServer(async (request, response) => {
       })).sort((a, b) => b.score - a.score || a.commander.localeCompare(b.commander, "de")).slice(0, 10);
       return json(response, 200, ranking);
     }
+    if (request.method === "GET" && url.pathname === "/api/galaxy") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const contacts = (await allAccounts()).filter((account) => account.id !== current.account.id)
+        .map(publicGalaxyRecord).sort((a, b) => b.score - a.score || a.commander.localeCompare(b.commander, "de"));
+      return json(response, 200, { contacts, updatedAt: Date.now() });
+    }
+    if (request.method === "POST" && url.pathname === "/api/raids") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const body = await readBody(request);
+      const targetId = String(body.targetId || "");
+      const result = await executeRaid(current.key, targetId, body.fleet || {});
+      return json(response, 200, result);
+    }
     if (request.method === "GET") return serveStatic(url.pathname, response);
     return json(response, 405, { error: "Method not allowed" });
   } catch (error) {
     console.error(error);
-    json(response, 500, { error: "Server error" });
+    json(response, error?.status || 500, { error: error?.status ? error.message : "Server error" });
   }
 });
 

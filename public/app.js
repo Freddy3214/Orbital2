@@ -4,6 +4,7 @@ const content = $("#content");
 
 const RESOURCE_LABELS = { metal: "Metall", crystal: "Kristall", tritium: "Tritium" };
 const RESOURCE_SYMBOLS = { metal: "Fe", crystal: "Cr", tritium: "Tr" };
+const LEVEL_CAP = 100;
 
 const BUILDINGS = {
   metalMine: {
@@ -157,6 +158,9 @@ let saveTimer = null;
 let lastLeaderboardFetch = 0;
 let isSaving = false;
 let authMode = "register";
+let galaxyIntel = [];
+let galaxyLoading = false;
+let lastGalaxyFetch = 0;
 
 const PLANET_TYPES = {
   temperate: { name: "Gemäßigte Welt", terrain: "Grünland, Meere und Gebirgsketten", position: "0% 0%", accent: "cyan" },
@@ -192,7 +196,7 @@ function addLog(type, text) {
   state.log = state.log.slice(0, 80);
 }
 function calculatedHomeFields() {
-  return Object.entries(state.buildings).reduce((sum, [key, level]) => sum + (BUILDINGS[key]?.fieldCost || 1) * level, 0);
+  return Object.entries(state.buildings).reduce((sum, [key, level]) => sum + (level > 0 ? (BUILDINGS[key]?.fieldCost || 1) : 0), 0);
 }
 function activePlanet() {
   return state.planets.find((planet) => planet.id === state.activePlanetId) || state.planets[0];
@@ -203,9 +207,10 @@ function fieldUsage(planet = activePlanet()) {
 function availableFields(planet = activePlanet()) {
   return Math.max(0, planet.fields - fieldUsage(planet));
 }
-function hasFreeFields(config) {
-  const reserved = buildingQueue().reduce((sum, item) => sum + (BUILDINGS[item.key]?.fieldCost || 0), 0);
-  return availableFields() - reserved >= (config.fieldCost || 0);
+function hasFreeFields(config, key = "") {
+  const reserved = buildingQueue().reduce((sum, item) => sum + (item.targetLevel === 1 ? (BUILDINGS[item.key]?.fieldCost || 0) : 0), 0);
+  const initialConstruction = key ? projectedBuildingLevel(key) === 0 : false;
+  return availableFields() - reserved >= (initialConstruction ? (config.fieldCost || 0) : 0);
 }
 function planetSizeLabel(fields) {
   if (fields < 160) return "Kleiner Planet";
@@ -232,6 +237,9 @@ function createColony() {
   };
 }
 function ensureStateShape() {
+  for (const group of [state.buildings, state.research]) {
+    for (const key of Object.keys(group || {})) group[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(group[key]) || 0)));
+  }
   state.ships.colonyShip ??= 0;
   if (!Array.isArray(state.planets) || !state.planets.length) {
     state.planets = [{ id: "vesta-prime", name: "Vesta Prime", type: "temperate", classification: "Gemäßigte Welt", fields: 228, usedFields: 0, coordinates: "G 02 · Sektor 17 · Orbit 04", colonizedAt: state.createdAt || Date.now(), homeworld: true }];
@@ -437,6 +445,51 @@ async function fetchLeaderboard() {
   } catch { /* The game remains usable when the leaderboard endpoint is unavailable. */ }
 }
 
+async function fetchGalaxy({ force = false } = {}) {
+  if (!state || galaxyLoading || (!force && Date.now() - lastGalaxyFetch < 10_000)) return;
+  galaxyLoading = true;
+  lastGalaxyFetch = Date.now();
+  try {
+    const response = await fetch("/api/galaxy", { credentials: "same-origin" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    galaxyIntel = Array.isArray(payload.contacts) ? payload.contacts : [];
+    if (activeView === "galaxy") render();
+  } catch { /* The galaxy can be viewed again once the connection returns. */
+  } finally {
+    galaxyLoading = false;
+  }
+}
+
+async function raidTarget(targetId) {
+  synchronize();
+  const cargoDrone = Math.min(5, Math.max(0, Number(state.ships.cargoDrone) || 0));
+  const interceptor = Math.min(3, Math.max(0, Number(state.ships.interceptor) || 0));
+  if (!cargoDrone && !interceptor) {
+    toast("Für einen Raubzug brauchst du Frachtdrohnen oder Interzeptoren.", true);
+    return;
+  }
+  try {
+    const response = await fetch("/api/raids", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ targetId, fleet: { cargoDrone, interceptor } }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Raubzug konnte nicht ausgeführt werden.");
+    state = payload.state;
+    ensureStateShape();
+    const loot = Object.entries(payload.report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${formatNumber(value)} ${RESOURCE_LABELS[key]}`).join(" · ");
+    toast(payload.report.won ? `Raubzug erfolgreich${loot ? `: ${loot}` : "."}` : "Raubzug abgewehrt. Einsatzflotte hat Verluste erlitten.", !payload.report.won);
+    render();
+    fetchGalaxy({ force: true });
+    fetchLeaderboard();
+  } catch (error) {
+    toast(error.message || "Der Raubzug konnte nicht ausgeführt werden.", true);
+  }
+}
+
 function setGateMode(mode) {
   authMode = mode;
   const login = mode === "login";
@@ -549,7 +602,7 @@ function upgradePathMarkup() {
   return `<ol class="upgrade-path">${steps.map((step) => `<li class="${step.done ? "done" : ""}"><span>${step.done ? "✓" : "○"}</span><strong>${step.label}</strong><small>${step.target}</small></li>`).join("")}</ol>`;
 }
 function planetRegistryMarkup() {
-  return `<div class="planet-registry">${state.planets.map((planet) => { const usage = fieldUsage(planet); return `<article class="planet-mini-card ${planet.id === activePlanet().id ? "active" : ""}">${planetArtMarkup(planet, "planet-mini-art")}<div><span class="badge">${escapeHtml(planet.classification)}</span><h3>${escapeHtml(planet.name)}</h3><p>${escapeHtml(planet.coordinates)}</p><strong>${formatNumber(usage)} / ${formatNumber(planet.fields)} Baufelder</strong></div></article>`; }).join("")}</div>`;
+  return `<div class="planet-registry">${state.planets.map((planet) => { const usage = fieldUsage(planet); const active = planet.id === activePlanet().id; return `<button type="button" class="planet-mini-card ${active ? "active" : ""}" data-planet-id="${escapeHtml(planet.id)}" aria-pressed="${active}">${planetArtMarkup(planet, "planet-mini-art")}<div><span class="badge">${escapeHtml(planet.classification)}</span><h3>${escapeHtml(planet.name)}</h3><p>${escapeHtml(planet.coordinates)}</p><strong>${formatNumber(usage)} / ${formatNumber(planet.fields)} Baufelder</strong><small>${active ? "Aktive Welt" : "Welt auswählen"}</small></div></button>`; }).join("")}</div>`;
 }
 function rankingMarkup() {
   if (!leaderboard.length) return `<div class="empty-state">Noch keine weiteren Signaturen im Sektor.</div>`;
@@ -569,18 +622,21 @@ function entityCard(kind, key, config, level, cost, requirements, queueKind) {
   const isBuilding = queueKind === "building";
   const queue = isBuilding ? buildingQueue() : state.queues[queueKind];
   const isCurrent = isBuilding ? queue.some((item) => item.key === key) : queue?.key === key;
+  const target = isBuilding ? projectedBuildingLevel(key) + 1 : level + 1;
+  const atCap = target > LEVEL_CAP;
   const locked = requirements.some((item) => !item.ok);
   const affordable = hasResources(cost);
-  const noFields = isBuilding && !hasFreeFields(config);
+  const noFields = isBuilding && !hasFreeFields(config, key);
   const blockedByQueue = !isBuilding && Boolean(queue);
-  const disabled = locked || !affordable || blockedByQueue || noFields;
-  const action = blockedByQueue ? "Warteschlange belegt" : locked ? "Voraussetzung fehlt" : noFields ? "Keine Baufelder frei" : affordable ? (isBuilding ? "+1 einreihen" : "In Auftrag geben") : "Rohstoffe fehlen";
-  const target = isBuilding ? projectedBuildingLevel(key) + 1 : level + 1;
+  const disabled = atCap || locked || !affordable || blockedByQueue || noFields;
+  const action = atCap ? "Maximalstufe erreicht" : blockedByQueue ? "Warteschlange belegt" : locked ? "Voraussetzung fehlt" : noFields ? "Keine Baufelder frei" : affordable ? (isBuilding ? "+1 einreihen" : "In Auftrag geben") : "Rohstoffe fehlen";
   const queueNote = isBuilding && isCurrent ? `<span class="queue-badge">${queue.filter((item) => item.key === key).length} geplant</span>` : "";
   const actions = isBuilding
-    ? `<div class="build-actions"><button class="${locked || noFields ? "secondary-button" : "primary-button"}" data-build="${key}" ${disabled ? "disabled" : ""}>${action}</button><button class="secondary-button" data-build-batch="${key}" data-amount="3" ${disabled ? "disabled" : ""}>+3 planen</button></div>`
-    : `<button class="${locked || noFields ? "secondary-button" : "primary-button"}" data-${kind}="${key}" ${disabled ? "disabled" : ""}>${action}</button>`;
-  return `<article class="entity-card ${locked || noFields ? "locked" : ""}"><img class="entity-art" src="${config.image}" alt="Illustration ${escapeHtml(config.name)}"><div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>Felder: ${config.fieldCost}</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, target))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell <strong>${level}</strong> → <strong>${target}</strong></div><p class="cost">${costMarkup(cost)}<br><span>Erster Abschluss in ${formatDuration(isBuilding ? buildTime(cost) : researchTime(cost))}</span></p>${actions}</div></article>`;
+    ? `<div class="build-actions"><button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-build="${key}" ${disabled ? "disabled" : ""}>${action}</button><button class="secondary-button" data-build-batch="${key}" data-amount="3" ${disabled ? "disabled" : ""}>+3 planen</button></div>`
+    : `<button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-${kind}="${key}" ${disabled ? "disabled" : ""}>${action}</button>`;
+  const levelDisplay = atCap ? `<strong>${LEVEL_CAP}</strong> · MAX` : `<strong>${level}</strong> → <strong>${target}</strong>`;
+  const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Erster Abschluss in ${formatDuration(isBuilding ? buildTime(cost) : researchTime(cost))}</span>`;
+  return `<article class="entity-card ${locked || noFields ? "locked" : ""}"><img class="entity-art" src="${config.image}" alt="Illustration ${escapeHtml(config.name)}"><div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>Felder beim Erstbau: ${config.fieldCost}</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
 }
 function energyUseFor(key, level) {
   if (key === "metalMine" || key === "crystalMine") return Math.floor(10 * level * 1.1 ** level);
@@ -592,7 +648,7 @@ function buildingsView() {
   const infrastructure = Object.entries(BUILDINGS).filter(([, item]) => item.group === "Infrastruktur");
   const projected = projectedBuildingState();
   const makeGroup = (title, entries) => `<section class="entity-list"><div class="panel-title"><h2>${title}</h2><span>${title === "Ökonomie" ? "PRODUKTION UND ENERGIE" : "KOLONIALE SYSTEME"}</span></div>${entries.map(([key, config]) => { const level = state.buildings[key]; const cost = getCost(config, projected.buildings[key] + 1); const requirements = config.requires ? config.requires(projected) : []; return entityCard("build", key, config, level, cost, requirements, "building"); }).join("")}</section>`;
-  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für Vesta Prime</h1><p>Plane bis zu mehrere Ausbauten vor: Kosten und Baufelder werden sofort reserviert, der erste Countdown startet direkt.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · ${buildingQueue().length} IN BAUREIHE</span></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Plane mehrere Ausbauten vor: Baufelder werden nur beim Erstbau belegt, jeder weitere Ausbau derselben Anlage benötigt keinen zusätzlichen Bauplatz.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · ${buildingQueue().length} IN BAUREIHE</span></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
 }
 function researchView() {
   return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Jedes Laborlevel verkürzt die Laufzeit eines Projekts.</p></div><span class="sector-label">LABOR STUFE ${state.buildings.researchLab}</span></section><section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, level + 1); return entityCard("research", key, config, level, cost, config.requires(state), "research"); }).join("")}</section>`;
@@ -615,8 +671,25 @@ function missionStatusMarkup() {
   const now = Date.now();
   return `<div class="queue-stack">${state.missions.map((mission) => { const target = MISSIONS[mission.targetId]; const end = mission.phase === "outgoing" ? mission.arrivesAt : mission.returnAt; const start = mission.phase === "outgoing" ? mission.departedAt : mission.arrivesAt; const p = Math.min(100, Math.max(0, (now - start) / (end - start) * 100)); return `<div class="queue-row"><div class="queue-top"><strong>${escapeHtml(target.name)} <span>· ${mission.phase === "outgoing" ? "Anflug" : "Rückflug"}</span></strong><span>${formatDuration(end - now)}</span></div><div class="progress"><i style="width:${p}%"></i></div></div>`; }).join("")}</div>`;
 }
+function galaxyMarkersMarkup() {
+  const positions = [[16, 23], [77, 22], [18, 72], [78, 72], [50, 15], [50, 82], [31, 42], [68, 48]];
+  return galaxyIntel.slice(0, positions.length).map((contact, index) => {
+    const [left, top] = positions[index];
+    const planet = contact.planets?.[0] || {};
+    return `<div class="world-marker enemy player-world" style="left:${left}%;top:${top}%" title="${escapeHtml(contact.commander)} · ${escapeHtml(planet.name || "Unbekannte Welt")}"></div><span class="map-label" style="left:${left + 1}%;top:${top + 6}%">${escapeHtml(contact.commander)}<small>${escapeHtml(planet.coordinates || "Unkartiert")}</small></span>`;
+  }).join("");
+}
+function raidCard(contact) {
+  const planet = contact.planets?.[0] || {};
+  const cargoDrone = Math.min(5, Math.max(0, Number(state.ships.cargoDrone) || 0));
+  const interceptor = Math.min(3, Math.max(0, Number(state.ships.interceptor) || 0));
+  const canRaid = cargoDrone || interceptor;
+  const fleetLabel = `${cargoDrone} Frachtdrohne${cargoDrone === 1 ? "" : "n"} · ${interceptor} Interzeptor${interceptor === 1 ? "" : "en"}`;
+  return `<article class="raid-card"><div class="raid-world"><span class="planet-art raid-planet" style="--planet-position:${(PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).position}" aria-hidden="true"></span><div><span class="badge">Spielersignal</span><h2>${escapeHtml(contact.commander)}</h2><p>${escapeHtml(planet.name || "Unbekannte Welt")} · ${escapeHtml(planet.coordinates || "Unkartiert")}</p></div></div><div class="raid-stats"><span>${formatNumber(contact.score)} Pkt.</span><span>${formatNumber(contact.planets?.length || 1)} Planet${contact.planets?.length === 1 ? "" : "en"}</span><span>${escapeHtml(planet.classification || "Unbekannte Klasse")}</span></div><p class="raid-note">Schnellraubzug: bis zu 15 % der vorhandenen Rohstoffe; das Kampfergebnis wird vom Server berechnet.</p><button class="primary-button" data-raid-target="${escapeHtml(contact.id)}" ${canRaid ? "" : "disabled"}>${canRaid ? `Raubzug senden · ${fleetLabel}` : "Flotte erforderlich"}</button></article>`;
+}
 function galaxyView() {
-  return `<section class="view-heading"><div><span class="eyebrow">GALAXIE 02 · SEKTOR 17</span><h1>Der Grenzraum ist offen.</h1><p>Bergungsziele sind vorab bekannt. Bei einer Kolonisierung bleibt die Planetengröße bis zur Landung ein Risiko - oder eine große Chance.</p></div><span class="sector-label">ANTRIEBSLEVEL ${state.research.combustionDrive}</span></section><div class="grid overview-grid"><section class="galaxy-map"><div class="world-marker home"></div><span class="map-label" style="left:43%;top:60%">Vesta Prime<small>Heimatwelt</small></span><div class="world-marker neutral" style="left:72%;top:26%"></div><span class="map-label" style="left:73%;top:32%">Raffinerie<small>Orbit 07</small></span><div class="world-marker neutral" style="left:21%;top:66%"></div><span class="map-label" style="left:22%;top:72%">Relais Kappa<small>Orbit 03</small></span><div class="world-marker enemy" style="left:75%;top:72%"></div><span class="map-label" style="left:76%;top:78%">Rho<small>Piraten</small></span><div class="world-marker unknown" style="left:48%;top:18%">?</div><span class="map-label" style="left:49%;top:24%">Unkartiert<small>Sensoren gestört</small></span></section><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenstatus</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section></div><section class="mission-list" style="margin-top:16px">${Object.values(MISSIONS).map((mission) => missionCard(mission)).join("")}</section>`;
+  const contacts = galaxyIntel.length ? galaxyIntel.map(raidCard).join("") : `<div class="empty-state"><strong>${galaxyLoading ? "Sensoren werden synchronisiert …" : "Noch keine anderen Kommandanten im Sektor."}</strong>Teile den Link zum Spiel mit Freunden. Ihre Kolonien erscheinen hier automatisch.</div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">GALAXIE 02 · SEKTOR 17</span><h1>Spieler, Sektoren und Raubzüge.</h1><p>Kolonien anderer Kommandanten erscheinen als Sensorsignaturen. Raubzüge sind Mehrspieler-Aktionen: Flotten, Verluste und Beute werden nicht im Browser, sondern auf dem Spielserver entschieden.</p></div><span class="sector-label">${galaxyLoading ? "SENSOREN AKTIV" : `${galaxyIntel.length} SPIELERSIGNAL${galaxyIntel.length === 1 ? "" : "E"}`}</span></section><div class="grid overview-grid"><section class="galaxy-map"><div class="world-marker home"></div><span class="map-label" style="left:43%;top:60%">${escapeHtml(activePlanet().name)}<small>Aktive Welt</small></span><div class="world-marker neutral" style="left:72%;top:26%"></div><span class="map-label" style="left:73%;top:32%">Raffinerie<small>Bergung</small></span><div class="world-marker unknown" style="left:48%;top:18%">?</div><span class="map-label" style="left:49%;top:24%">Unkartiert<small>Kolonisierung</small></span>${galaxyMarkersMarkup()}</section><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenstatus</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}<div class="tip" style="margin-top:12px"><b>Raubzug-Paket</b><span>Es werden höchstens 5 Frachtdrohnen und 3 Interzeptoren eingesetzt. Interzeptoren liefern Kampfstärke, Frachtdrohnen tragen Beute.</span></div></div></section></div><section class="raid-list" style="margin-top:16px"><div class="panel-title"><h2>Spieler-Signaturen</h2><span>LIVE AUS DEM SERVER</span></div>${contacts}</section><section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Neutrale Operationen</h2><span>NPC-ZIELE</span></div>${Object.values(MISSIONS).map((mission) => missionCard(mission)).join("")}</section>`;
 }
 function missionCard(mission) {
   const hasCargo = state.ships.cargoDrone > 0;
@@ -650,11 +723,12 @@ function startBuilding(key, amount = 1) {
   for (let index = 0; index < amount; index += 1) {
     const projected = projectedBuildingState();
     const targetLevel = projected.buildings[key] + 1;
+    if (targetLevel > LEVEL_CAP) break;
     const requirements = config.requires ? config.requires(projected) : [];
     const cost = getCost(config, targetLevel);
-    if (requirements.some((item) => !item.ok) || !hasResources(cost) || !hasFreeFields(config)) break;
+    if (requirements.some((item) => !item.ok) || !hasResources(cost) || !hasFreeFields(config, key)) break;
     pay(cost);
-    state.queues.building.push({ key, targetLevel, cost, fieldCost: config.fieldCost, queuedAt: Date.now() });
+    state.queues.building.push({ key, targetLevel, cost, fieldCost: targetLevel === 1 ? config.fieldCost : 0, queuedAt: Date.now() });
     added += 1;
   }
   if (!added) return;
@@ -669,6 +743,7 @@ function startResearch(key) {
   synchronize();
   const config = RESEARCH[key];
   const level = state.research[key];
+  if (level >= LEVEL_CAP) return;
   const requirements = config.requires(state);
   const cost = getCost(config, level + 1);
   if (state.queues.research || requirements.some((item) => !item.ok) || !hasResources(cost)) return;
@@ -725,10 +800,25 @@ $("#nav").addEventListener("click", (event) => {
   content.focus({ preventScroll: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (activeView === "overview") fetchLeaderboard();
+  if (activeView === "galaxy") fetchGalaxy({ force: true });
 });
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
+  if (button.dataset.planetId) {
+    const planet = state.planets.find((entry) => entry.id === button.dataset.planetId);
+    if (!planet) return;
+    state.activePlanetId = planet.id;
+    addLog("system", `Aktive Welt auf ${planet.name} gewechselt.`);
+    toast(`${planet.name} ist jetzt die aktive Welt.`);
+    render();
+    save({ quiet: true });
+    return;
+  }
+  if (button.dataset.raidTarget) {
+    raidTarget(button.dataset.raidTarget);
+    return;
+  }
   if (button.dataset.build) startBuilding(button.dataset.build);
   if (button.dataset.buildBatch) startBuilding(button.dataset.buildBatch, Number(button.dataset.amount) || 3);
   if (button.dataset.research) startResearch(button.dataset.research);
@@ -749,5 +839,6 @@ setInterval(() => {
   render();
   if (Date.now() % 5_000 < 1300) save({ quiet: true });
   if (activeView === "overview") fetchLeaderboard();
+  if (activeView === "galaxy") fetchGalaxy();
 }, 1000);
 window.addEventListener("beforeunload", () => { if (state) save({ quiet: true }); });
