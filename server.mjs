@@ -48,7 +48,7 @@ const defaultState = (commander) => ({
     id: "vesta-prime", name: "Vesta Prime", type: "temperate", classification: "Gemäßigte Welt", fields: 228,
     usedFields: 9, coordinates: "G 02 · Sektor 17 · Orbit 04", colonizedAt: Date.now(), homeworld: true,
   }],
-  queues: { building: [], research: null, ship: null }, missions: [], spyReports: [],
+  queues: { building: [], research: null, ship: null }, missions: [], spyReports: [], notifications: [],
   log: [{ at: Date.now(), type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
 });
 
@@ -128,6 +128,10 @@ async function updateAccountState(key, state) {
   if (asWholeNumber(state.revision) !== asWholeNumber(previous.state.revision)) fail("Der Spielstand hat sich geändert. Bitte synchronisieren.", 409);
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
+  const knownNotifications = new Set();
+  state.notifications = [...(previous.state.notifications || []), ...(state.notifications || [])]
+    .filter((notification) => notification && notification.id && !knownNotifications.has(notification.id) && knownNotifications.add(notification.id))
+    .slice(0, 40);
   const incomingDefenses = new Map(state.planets.map(p=>[p.id,p.defenses || {}]));
   state.planets = state.planets.filter(p => !String(p.id).startsWith("frontier-"));
   state.planets.push(...previous.state.planets.filter(p => String(p.id).startsWith("frontier-")).map(p=>({ ...p, defenses: incomingDefenses.get(p.id) || p.defenses || {} })));
@@ -167,6 +171,14 @@ function asWholeNumber(value, fallback = 0) {
 }
 function addStateLog(state, type, text) {
   state.log = [{ at: Date.now(), type, text }, ...(Array.isArray(state.log) ? state.log : [])].slice(0, 80);
+}
+function addNotification(state, kind, title, text, priority = "normal") {
+  const notification = {
+    id: `${Date.now()}-${randomBytes(4).toString("hex")}`,
+    at: Date.now(), kind, title, text, priority,
+  };
+  state.notifications = [notification, ...(Array.isArray(state.notifications) ? state.notifications : [])].slice(0, 40);
+  return notification;
 }
 function stableHash(value) {
   let hash = 2166136261;
@@ -349,7 +361,7 @@ function spyReportFor(attacker, defender, probeCount) {
   const defenderSensors = asWholeNumber(defender.state.research?.deepSpaceSensors);
   const defenses = primaryPlanet(defender).defenses || {};
   const jammer = Math.min(12, asWholeNumber(defenses.sensorJammer));
-  const intelligence = Math.max(1, Math.min(4, 1 + Math.floor((attackerSensors - defenderSensors - jammer + Math.log2(used + 1)) / 3)));
+  const intelligence = Math.max(1, Math.min(5, 1 + Math.floor((attackerSensors - defenderSensors - jammer + Math.log2(used + 1) * 3) / 4)));
   const antiSpy = Object.entries(DEFENSE).reduce((sum,[key,item])=>sum+asWholeNumber(defenses[key])*item.antiSpy,0);
   const interceptionRisk = Math.max(.03, Math.min(.92, .08 + defenderSensors * .006 + antiSpy - Math.log2(used + 1) * .018));
   const lost = Math.random() < interceptionRisk ? Math.max(1, Math.floor(used * Math.min(.7, interceptionRisk + .12))) : 0;
@@ -370,16 +382,21 @@ function spyReportFor(attacker, defender, probeCount) {
     world: intelligence >= 2 ? {
       classification: String(planet.classification || "Unbekannte Welt"),
       fields: Math.max(96, Math.min(390, asWholeNumber(planet.fields, 228))),
+      usedFields: Math.max(0, asWholeNumber(planet.usedFields)),
     } : null,
     resources: intelligence >= 1 ? Object.fromEntries(RESOURCE_KEYS.map((key) => [key, asWholeNumber(defender.state.resources?.[key])])) : null,
-    ships: intelligence >= 2 ? Object.fromEntries(Object.entries(defender.state.ships || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
-    buildings: intelligence >= 3 ? Object.fromEntries(Object.entries(defender.state.buildings || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
-    research: intelligence >= 4 ? Object.fromEntries(Object.entries(defender.state.research || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
-    defenses: intelligence >= 3 ? Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(defenses[key])])) : null,
+    ships: intelligence >= 3 ? Object.fromEntries(Object.entries(defender.state.ships || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
+    buildings: intelligence >= 4 ? Object.fromEntries(Object.entries(defender.state.buildings || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
+    research: intelligence >= 5 ? Object.fromEntries(Object.entries(defender.state.research || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
+    defenses: intelligence >= 4 ? Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(defenses[key])])) : null,
+    activeMissions: intelligence >= 5 ? asWholeNumber(defender.state.missions?.length) : null,
   };
   attacker.state.spyReports = [report, ...(Array.isArray(attacker.state.spyReports) ? attacker.state.spyReports : []).filter((entry) => Number(entry.expiresAt) > Date.now())].slice(0, 20);
-  addStateLog(attacker.state, "scan", `Aufklärung von ${report.signature} abgeschlossen. Informationsstufe ${intelligence}/4${lost ? ` · ${lost} Sonde verloren` : ""}.`);
-  addStateLog(defender.state, "scan", `Unbekannte Sonden haben ${planet.name || "eine Welt"} ausgespäht.`);
+  addStateLog(attacker.state, "scan", `Aufklärung von ${report.signature} abgeschlossen. Informationsstufe ${intelligence}/5${lost ? ` · ${lost} Sonde verloren` : ""}.`);
+  addNotification(attacker.state, "scan", "Spionagebericht eingetroffen", `${report.signature}: Detailstufe ${intelligence}/5 · ${used} Sonde${used === 1 ? "" : "n"} eingesetzt${lost ? ` · ${lost} verloren` : ""}.`, intelligence >= 4 ? "high" : "normal");
+  const source = defenderSensors >= 3 ? `Signatur von ${attacker.username}` : "Unbekannte Signatur";
+  addStateLog(defender.state, "scan", `${source} hat ${planet.name || "eine Welt"} ausgespäht.`);
+  addNotification(defender.state, "scan", "Spionagealarm", `${source} hat ${planet.name || "deinen Planeten"} aufgeklärt. Prüfe Lager, Flotte und Verteidigung.`, "high");
   return report;
 }
 function prepareRaid(attacker, defender, rawFleet) {
@@ -433,7 +450,15 @@ function prepareRaid(attacker, defender, rawFleet) {
   addStateLog(defender.state, won ? "combat" : "mission", won
     ? `${attacker.username} hat einen Raubzug geflogen und ${lootText} entwendet.`
     : `${attacker.username} hat einen Raubzug geflogen, aber deine Verteidigung hielt stand.`);
-  return { won, fleet, loot, attackPower, defensePower, losses, defenseLosses };
+  const attackerLosses = Object.entries(losses).filter(([, amount]) => amount).map(([key, amount]) => `${amount} ${FLEET[key].name || key}`).join(", ") || "keine";
+  const defenseLossText = Object.entries(defenseLosses).filter(([, amount]) => amount).map(([key, amount]) => `${amount} ${DEFENSE[key].name}`).join(", ") || "keine";
+  addNotification(attacker.state, "combat", won ? "Kampfbericht: Sieg" : "Kampfbericht: Einsatz verloren", won
+    ? `Beute: ${lootText}. Eigene Verluste: ${attackerLosses}.`
+    : `Deine Flotte wurde abgewehrt. Eigene Verluste: ${attackerLosses}.`, won ? "normal" : "high");
+  addNotification(defender.state, "combat", won ? "Angriffsalarm: Ressourcen entwendet" : "Angriff abgefangen", won
+    ? `${attacker.username} hat ${lootText} erbeutet. Beschädigte Abwehr: ${defenseLossText}.`
+    : `${attacker.username} wurde abgefangen. Deine Verteidigung hielt stand.`, "high");
+  return { won, fleet, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, resolvedAt: Date.now() };
 }
 async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
   const separator = targetId.indexOf(":");
@@ -553,6 +578,8 @@ function saveableState(rawState, username) {
   }
   for (const resource of RESOURCE_KEYS) state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(state.resources[resource]));
   state.log = state.log.slice(0, 80);
+  state.spyReports = Array.isArray(state.spyReports) ? state.spyReports.slice(0, 20) : [];
+  state.notifications = Array.isArray(state.notifications) ? state.notifications.slice(0, 40) : [];
   state.planets = state.planets.slice(0, 20);
   state.missions = state.missions.slice(0, 20);
   return state;
@@ -653,6 +680,34 @@ const server = createServer(async (request, response) => {
         commander: account.username, score: score(account.state), planets: account.state.planets?.length || 1,
       })).sort((a, b) => b.score - a.score || a.commander.localeCompare(b.commander, "de"));
       return json(response, 200, ranking);
+    }
+    if (request.method === "POST" && url.pathname === "/api/admin/grant-resources") {
+      const token = String(request.headers["x-admin-token"] || "");
+      if (!process.env.ADMIN_GRANT_TOKEN || token !== process.env.ADMIN_GRANT_TOKEN) return json(response, 401, { error: "Nicht autorisiert" });
+      const body = await readBody(request);
+      const usernames = Array.isArray(body.usernames) ? body.usernames.map(cleanUsername).filter(Boolean) : [];
+      const amount = Math.min(1_000_000, asWholeNumber(body.amount));
+      if (!usernames.length || !amount) return json(response, 400, { error: "Nutzer und Betrag sind erforderlich." });
+      const credits = await mutate(async () => {
+        const results = [];
+        for (const username of [...new Set(usernames)]) {
+          const key = accountKey(username);
+          const account = await accountByKey(key);
+          if (!account) fail(`Account nicht gefunden: ${username}`, 404);
+          for (const resource of RESOURCE_KEYS) account.state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(account.state.resources?.[resource]) + amount);
+          account.state.revision = asWholeNumber(account.state.revision) + 1;
+          addStateLog(account.state, "system", `Admin-Gutschrift: +${amount.toLocaleString("de-DE")} Metall, Kristall und Tritium.`);
+          if (pool) await pool.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(account.state)]);
+          else {
+            const database = await loadLocalDatabase();
+            database.accounts[key].state = account.state;
+            await saveLocalDatabase(database);
+          }
+          results.push({ username: account.username, resources: Object.fromEntries(RESOURCE_KEYS.map((resource) => [resource, asWholeNumber(account.state.resources[resource])])) });
+        }
+        return results;
+      });
+      return json(response, 200, { ok: true, credits });
     }
     if (request.method === "GET" && url.pathname === "/api/galaxy") {
       const current = await authenticatedAccount(request);
