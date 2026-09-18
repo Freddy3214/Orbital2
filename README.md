@@ -27,11 +27,20 @@ Beim ersten Besuch wird ein Kommandantenaccount mit Passwort angelegt; bestehend
 - Baufeld-System pro Planet: 96 bis 390 Felder bei neu besiedelten Welten, erst nach der Landung bekannt; ein Gebäudetyp belegt seine Felder nur beim Erstbau
 - Kolonieschiff und unkartierte Kolonisierungsmission als Risikomechanik
 - Direkt auswählbare Planeten-Registrierung
-- Galaxie-Ansicht mit Mehrspieler-Signaturen und serverseitig berechneten Schnellraubzügen inklusive Beute, Verlusten und Ereignisprotokoll
+- Schwarze Galaxiekarte mit weißen, benannten Planetenpunkten, Zielauswahl, Zoom und Verschieben; keine Spielernamen auf der Karte
+- Tiefraumsensorik: Sichtweite von 14 bis 92 Sektoren, serverseitig gefiltert; eigene aktive Welt ist der Sensorursprung
+- Aufklärsonden mit 1- oder 5-Sonden-Aufträgen, Abfangrisiko, 15 Sekunden Abklingzeit und gespeicherten Berichten mit vier Informationsstufen
+- Spionageberichte als Momentaufnahme: Rohstoffe, dann Besitzer/Flotte/Planet, danach Gebäude und Forschung je nach Forschungsunterschied; Berichte gelten zwei Stunden
+- Schnellraubzüge benötigen ein sichtbares Ziel und einen gültigen Spionagebericht
+- Farbige Infrastruktur- und Forschungskarten, Stufenbalken und eigene Illustrationen für Lager, Robotik und Sensorik
 - Lokales Mehrprofil-Ranking über die Server-API
 - Responsives Sci-Fi-Interface ohne externe Assets oder Tracker
 
 ## Balancing
+
+Diese Version bildet die ausdrücklich gewünschten Karten- und Spionagemechaniken ab, nicht den vollständigen Funktionsumfang von Space Pioneers. Spionage und Raids werden derzeit sofort aufgelöst; reale Flugzeiten für PvP, Allianzen, Handel, Verteidigungsbauten und Rückruf fehlen noch. Wirtschaft und Flottenbestand sind weiterhin accountweit; Kolonien sind auswählbare Kartenpositionen, aber noch keine eigenständigen Wirtschaftskreisläufe. Spionageberichte zeigen daher die gemeinsame Wirtschaft des Besitzers. Die Karte filtert Zielinformationen serverseitig, jedoch bleibt das freie Speichern eigener Wirtschaftswerte ein Prototypenmodell und kein vollständiger Manipulationsschutz.
+
+Prüfung: `node work/verify-galaxy.mjs` startet einen isolierten lokalen Testserver und prüft Reichweite, Spionage, Sperrzeit, Berichte, Raid-Voraussetzungen und Schutz gegen veraltete Spielstände. Die produktive Datenbank wird dabei nicht benutzt.
 
 Die Produktionskurven folgen der Orientierung im bereitgestellten GDD: exponentielles Minenwachstum, Energieengpässe als proportionaler Effizienz-Malus und logarithmisch beschleunigte Bauzeiten durch Infrastruktur. Für einen direkt testbaren Prototypen sind Aufträge auf mindestens fünf Sekunden begrenzt und es gibt bewusst keine Echtgeld- oder Wartezeit-Abkürzungen.
 
