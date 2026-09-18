@@ -39,7 +39,7 @@ const defaultState = (commander) => ({
     commandCenter: 1, metalMine: 1, crystalMine: 0, tritiumSynthesizer: 0, solarPlant: 1,
     roboticsFactory: 0, researchLab: 0, shipyard: 0, metalStorage: 0, crystalStorage: 0, tritiumStorage: 0,
   },
-  research: { energyTech: 0, combustionDrive: 0, plasmaTheory: 0, avionics: 0, deepSpaceSensors: 0 },
+  research: { energyTech: 0, combustionDrive: 0, plasmaTheory: 0, avionics: 0, deepSpaceSensors: 0, constructionEngineering: 0 },
   ships: { cargoDrone: 0, interceptor: 0, colonyShip: 0, spyProbe: 0 },
   activePlanetId: "vesta-prime",
   planets: [{
