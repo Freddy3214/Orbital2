@@ -48,7 +48,7 @@ const defaultState = (commander) => ({
     id: "vesta-prime", name: "Vesta Prime", type: "temperate", classification: "Gemäßigte Welt", fields: 228,
     usedFields: 9, coordinates: "G 02 · Sektor 17 · Orbit 04", colonizedAt: Date.now(), homeworld: true,
   }],
-  queues: { building: [], research: null, ship: null }, missions: [], spyReports: [], notifications: [],
+  queues: { building: [], research: null, ship: null }, missions: [], spyReports: [], combatReports: [], messages: [], notifications: [],
   log: [{ at: Date.now(), type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
 });
 
@@ -128,6 +128,14 @@ async function updateAccountState(key, state) {
   if (asWholeNumber(state.revision) !== asWholeNumber(previous.state.revision)) fail("Der Spielstand hat sich geändert. Bitte synchronisieren.", 409);
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
+  const knownMessages = new Set();
+  state.messages = [...(previous.state.messages || []), ...(state.messages || [])]
+    .filter((message) => message && message.id && !knownMessages.has(message.id) && knownMessages.add(message.id))
+    .slice(0, 80);
+  const knownCombatReports = new Set();
+  state.combatReports = [...(previous.state.combatReports || []), ...(state.combatReports || [])]
+    .filter((report) => report && report.id && !knownCombatReports.has(report.id) && knownCombatReports.add(report.id))
+    .slice(0, 40);
   const knownNotifications = new Set();
   state.notifications = [...(previous.state.notifications || []), ...(state.notifications || [])]
     .filter((notification) => notification && notification.id && !knownNotifications.has(notification.id) && knownNotifications.add(notification.id))
@@ -179,6 +187,15 @@ function addNotification(state, kind, title, text, priority = "normal") {
   };
   state.notifications = [notification, ...(Array.isArray(state.notifications) ? state.notifications : [])].slice(0, 40);
   return notification;
+}
+function addCombatReport(state, report) {
+  state.combatReports = [report, ...(Array.isArray(state.combatReports) ? state.combatReports : [])].slice(0, 40);
+}
+function addPlayerMessage(state, message) {
+  state.messages = [message, ...(Array.isArray(state.messages) ? state.messages : [])].slice(0, 80);
+}
+function cleanMessageText(value, limit) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, limit);
 }
 function stableHash(value) {
   let hash = 2166136261;
@@ -391,7 +408,7 @@ function spyReportFor(attacker, defender, probeCount) {
     defenses: intelligence >= 4 ? Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(defenses[key])])) : null,
     activeMissions: intelligence >= 5 ? asWholeNumber(defender.state.missions?.length) : null,
   };
-  attacker.state.spyReports = [report, ...(Array.isArray(attacker.state.spyReports) ? attacker.state.spyReports : []).filter((entry) => Number(entry.expiresAt) > Date.now())].slice(0, 20);
+  attacker.state.spyReports = [report, ...(Array.isArray(attacker.state.spyReports) ? attacker.state.spyReports : [])].slice(0, 40);
   addStateLog(attacker.state, "scan", `Aufklärung von ${report.signature} abgeschlossen. Informationsstufe ${intelligence}/5${lost ? ` · ${lost} Sonde verloren` : ""}.`);
   addNotification(attacker.state, "scan", "Spionagebericht eingetroffen", `${report.signature}: Detailstufe ${intelligence}/5 · ${used} Sonde${used === 1 ? "" : "n"} eingesetzt${lost ? ` · ${lost} verloren` : ""}.`, intelligence >= 4 ? "high" : "normal");
   const source = defenderSensors >= 3 ? `Signatur von ${attacker.username}` : "Unbekannte Signatur";
@@ -458,7 +475,11 @@ function prepareRaid(attacker, defender, rawFleet) {
   addNotification(defender.state, "combat", won ? "Angriffsalarm: Ressourcen entwendet" : "Angriff abgefangen", won
     ? `${attacker.username} hat ${lootText} erbeutet. Beschädigte Abwehr: ${defenseLossText}.`
     : `${attacker.username} wurde abgefangen. Deine Verteidigung hielt stand.`, "high");
-  return { won, fleet, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, resolvedAt: Date.now() };
+  const resolvedAt = Date.now();
+  const combatId = `${attacker.id}-${defender.id}-${resolvedAt}-${randomBytes(3).toString("hex")}`;
+  addCombatReport(attacker.state, { id: combatId, at: resolvedAt, side: "attacker", opponent: defender.username, won, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText });
+  addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, attackPower, defensePower, losses: {}, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText });
+  return { won, fleet, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, resolvedAt };
 }
 async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
   const separator = targetId.indexOf(":");
@@ -519,6 +540,55 @@ async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
   await saveLocalDatabase(database);
   return { state: attacker.state, report };
 }
+async function sendPlayerMessage(senderKey, recipientName, rawSubject, rawBody) {
+  const recipientKey = accountKey(recipientName);
+  const subject = cleanMessageText(rawSubject, 72);
+  const body = cleanMessageText(rawBody, 1200);
+  if (!recipientKey || !subject || !body) fail("Empfänger, Betreff und Nachricht sind erforderlich.");
+  if (recipientKey === senderKey) fail("Du kannst dir nicht selbst schreiben.");
+  const apply = (sender, recipient) => {
+    const sentAt = Date.now();
+    const id = `${sender.id}-${recipient.id}-${sentAt}-${randomBytes(3).toString("hex")}`;
+    const threadId = [sender.id, recipient.id].sort().join(":");
+    addPlayerMessage(sender.state, { id, threadId, at: sentAt, direction: "outbound", sender: sender.username, recipient: recipient.username, subject, body, read: true });
+    addPlayerMessage(recipient.state, { id, threadId, at: sentAt, direction: "inbound", sender: sender.username, recipient: recipient.username, subject, body, read: false });
+    addNotification(recipient.state, "message", "Neue Direktnachricht", `${sender.username}: ${subject}`, "high");
+    addStateLog(sender.state, "message", `Nachricht an ${recipient.username} gesendet: ${subject}`);
+    addStateLog(recipient.state, "message", `Neue Nachricht von ${sender.username}: ${subject}`);
+    sender.state.revision = asWholeNumber(sender.state.revision) + 1;
+    recipient.state.revision = asWholeNumber(recipient.state.revision) + 1;
+    return { state: sender.state, message: sender.state.messages[0] };
+  };
+  if (pool) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await client.query("SELECT id, account_key, username, created_at, password_salt, password_hash, state FROM accounts WHERE account_key = $1 OR account_key = $2 ORDER BY account_key FOR UPDATE", [senderKey, recipientKey]);
+      const senderRow = result.rows.find((row) => row.account_key === senderKey);
+      const recipientRow = result.rows.find((row) => row.account_key === recipientKey);
+      if (!senderRow || !recipientRow) fail("Kommandant nicht gefunden.", 404);
+      const sender = accountFromRow(senderRow);
+      const recipient = accountFromRow(recipientRow);
+      const outcome = apply(sender, recipient);
+      await client.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [senderKey, JSON.stringify(sender.state)]);
+      await client.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [recipientKey, JSON.stringify(recipient.state)]);
+      await client.query("COMMIT");
+      return outcome;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally { client.release(); }
+  }
+  const database = await loadLocalDatabase();
+  const sender = database.accounts[senderKey];
+  const recipient = database.accounts[recipientKey];
+  if (!sender || !recipient) fail("Kommandant nicht gefunden.", 404);
+  const outcome = apply(sender, recipient);
+  database.accounts[senderKey] = sender;
+  database.accounts[recipientKey] = recipient;
+  await saveLocalDatabase(database);
+  return outcome;
+}
 async function makePasswordRecord(password) {
   const salt = randomBytes(16).toString("base64url");
   const hash = await scrypt(password, salt, 64);
@@ -578,7 +648,9 @@ function saveableState(rawState, username) {
   }
   for (const resource of RESOURCE_KEYS) state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(state.resources[resource]));
   state.log = state.log.slice(0, 80);
-  state.spyReports = Array.isArray(state.spyReports) ? state.spyReports.slice(0, 20) : [];
+  state.spyReports = Array.isArray(state.spyReports) ? state.spyReports.slice(0, 40) : [];
+  state.combatReports = Array.isArray(state.combatReports) ? state.combatReports.slice(0, 40) : [];
+  state.messages = Array.isArray(state.messages) ? state.messages.slice(0, 80) : [];
   state.notifications = Array.isArray(state.notifications) ? state.notifications.slice(0, 40) : [];
   state.planets = state.planets.slice(0, 20);
   state.missions = state.missions.slice(0, 20);
@@ -674,6 +746,22 @@ const server = createServer(async (request, response) => {
       if (!state) return json(response, 400, { error: "Ungültiger Spielstand" });
       await mutate(() => updateAccountState(current.key, state));
       return json(response, 200, { ok: true, revision: state.revision, savedAt: Date.now() });
+    }
+    if (request.method === "GET" && url.pathname === "/api/players") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const query = cleanUsername(url.searchParams.get("q") || "").toLocaleLowerCase("de-DE");
+      const players = (await allAccounts()).filter((account) => account.id !== current.account.id)
+        .filter((account) => !query || account.username.toLocaleLowerCase("de-DE").includes(query))
+        .map((account) => ({ username: account.username, score: score(account.state), planets: account.state.planets?.length || 1 }))
+        .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username, "de")).slice(0, 20);
+      return json(response, 200, { players });
+    }
+    if (request.method === "POST" && url.pathname === "/api/messages") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const body = await readBody(request);
+      return json(response, 201, await mutate(() => sendPlayerMessage(current.key, cleanUsername(body.recipient), body.subject, body.body)));
     }
     if (request.method === "GET" && url.pathname === "/api/leaderboard") {
       const ranking = (await allAccounts()).map((account) => ({
