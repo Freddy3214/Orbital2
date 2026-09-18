@@ -21,6 +21,8 @@ const LEVEL_CAP = 100;
 const GALAXY_SPAN = 220;
 const FRONTIER_SITE_COUNT = 420;
 const RESOURCE_KEYS = ["metal", "crystal", "tritium"];
+const MAX_PLANETS = 8;
+const TEST_ACCOUNT_USERNAME = process.env.TEST_ACCOUNT_USERNAME || "Lord Fredo";
 let mutationChain = Promise.resolve();
 function mutate(action) {
   const result = mutationChain.then(action);
@@ -34,23 +36,33 @@ const mimeTypes = {
   ".json": "application/json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
 };
 
-const defaultState = (commander) => ({
-  version: 3, commander, createdAt: Date.now(),
+const freshBuildings = (homeworld = false) => ({
+  commandCenter: 1, metalMine: homeworld ? 1 : 0, crystalMine: 0, tritiumSynthesizer: 0, solarPlant: homeworld ? 1 : 0,
+  roboticsFactory: 0, researchLab: 0, shipyard: 0, metalStorage: 0, crystalStorage: 0, tritiumStorage: 0,
+});
+const randomWorldName = (seedValue) => {
+  const names = ["Aurelia", "Nerys", "Kallisto", "Ithara", "Myris", "Solis", "Caelia", "Orison", "Tethys", "Novara", "Elyra", "Dravos"];
+  return names[stableHash(seedValue) % names.length];
+};
+const defaultState = (commander, position) => {
+  const buildings = freshBuildings(true);
+  const worldName = randomWorldName(`${commander}:${Date.now()}`);
+  return ({
+  version: 4, commander, createdAt: Date.now(),
   resources: { metal: 20000, crystal: 10000, tritium: 5000, lastUpdate: Date.now() },
-  buildings: {
-    commandCenter: 1, metalMine: 1, crystalMine: 0, tritiumSynthesizer: 0, solarPlant: 1,
-    roboticsFactory: 0, researchLab: 0, shipyard: 0, metalStorage: 0, crystalStorage: 0, tritiumStorage: 0,
-  },
+  buildings: { ...buildings },
   research: { energyTech: 0, combustionDrive: 0, plasmaTheory: 0, avionics: 0, deepSpaceSensors: 0, constructionEngineering: 0 },
   ships: { cargoDrone: 0, interceptor: 0, colonyShip: 0, spyProbe: 0 },
   activePlanetId: "vesta-prime",
   planets: [{
-    id: "vesta-prime", name: "Vesta Prime", type: "temperate", classification: "Gemäßigte Welt", fields: 228,
-    usedFields: 9, coordinates: "G 02 · Sektor 17 · Orbit 04", colonizedAt: Date.now(), homeworld: true,
+    id: "vesta-prime", name: worldName, type: "temperate", classification: "Gemäßigte Welt", fields: 228,
+    usedFields: 3, coordinates: `X ${position.x.toFixed(1)} · Y ${position.y.toFixed(1)}`, position, colonizedAt: Date.now(), homeworld: true,
+    buildings, buildingQueue: [], shipQueue: null, defenses: {},
   }],
   queues: { building: [], research: null, ship: null }, missions: [], spyReports: [], combatReports: [], messages: [], notifications: [],
   log: [{ at: Date.now(), type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
-});
+  });
+};
 
 function cleanUsername(value) {
   const name = String(value || "").trim().replace(/[^\p{L}\p{N} _-]/gu, "").replace(/\s+/g, " ").slice(0, 20);
@@ -58,6 +70,7 @@ function cleanUsername(value) {
 }
 function accountKey(username) { return username.toLocaleLowerCase("de-DE"); }
 function cleanPassword(value) { const password = String(value || ""); return password.length >= 8 && password.length <= 128 ? password : ""; }
+function cleanPlanetName(value) { return String(value || "").trim().replace(/[^\p{L}\p{N} .'-]/gu, "").replace(/\s+/g, " ").slice(0, 28); }
 function emptyDatabase() { return { version: 1, accounts: {} }; }
 async function loadLocalDatabase() {
   try {
@@ -158,9 +171,21 @@ async function updateAccountState(key, state) {
   state.notifications = [...(previous.state.notifications || []), ...(state.notifications || [])]
     .filter((notification) => notification && notification.id && !knownNotifications.has(notification.id) && knownNotifications.add(notification.id))
     .slice(0, 40);
-  const incomingDefenses = new Map(state.planets.map(p=>[p.id,p.defenses || {}]));
+  const incomingPlanets = new Map(state.planets.map((planet) => [planet.id, planet]));
   state.planets = state.planets.filter(p => !String(p.id).startsWith("frontier-"));
-  state.planets.push(...previous.state.planets.filter(p => String(p.id).startsWith("frontier-")).map(p=>({ ...p, defenses: incomingDefenses.get(p.id) || p.defenses || {} })));
+  state.planets.push(...previous.state.planets.filter(p => String(p.id).startsWith("frontier-")).map((planet) => {
+    const incoming = incomingPlanets.get(planet.id);
+    if (!incoming) return planet;
+    return {
+      ...planet,
+      name: cleanPlanetName(incoming.name) || planet.name,
+      buildings: incoming.buildings || planet.buildings || freshBuildings(false),
+      buildingQueue: Array.isArray(incoming.buildingQueue) ? incoming.buildingQueue : [],
+      shipQueue: incoming.shipQueue || null,
+      usedFields: asWholeNumber(incoming.usedFields),
+      defenses: incoming.defenses || planet.defenses || {},
+    };
+  }));
   for (const planet of state.planets) planet.defenses = Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(planet.defenses?.[key])]));
   state.revision = asWholeNumber(previous.state.revision) + 1;
   if (pool) {
@@ -169,6 +194,16 @@ async function updateAccountState(key, state) {
   }
   const database = await loadLocalDatabase();
   if (!database.accounts[key]) return;
+  database.accounts[key].state = state;
+  await saveLocalDatabase(database);
+}
+async function persistAccountState(key, state) {
+  if (pool) {
+    await pool.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(state)]);
+    return;
+  }
+  const database = await loadLocalDatabase();
+  if (!database.accounts[key]) fail("Account nicht gefunden.", 404);
   database.accounts[key].state = state;
   await saveLocalDatabase(database);
 }
@@ -215,6 +250,7 @@ function addPlayerMessage(state, message) {
 function cleanMessageText(value, limit) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, limit);
 }
+function hasTestGrantAccess(account) { return accountKey(account?.username) === accountKey(TEST_ACCOUNT_USERNAME); }
 function stableHash(value) {
   let hash = 2166136261;
   for (const character of String(value)) {
@@ -234,15 +270,30 @@ function activeGalaxyAccount(account) {
 function signalId(account) { return `${account.id}:${primaryPlanet(account).id}`; }
 function galaxyPosition(account) {
   const planet = primaryPlanet(account);
+  if (planet.position && Number.isFinite(Number(planet.position.x)) && Number.isFinite(Number(planet.position.y))) return { x: Number(planet.position.x), y: Number(planet.position.y) };
   const site = frontierSites.find(site => site.id === planet.id);
   if (site) {
-    if (planet.position) return planet.position;
     return { ...site.position };
   }
   const seed = stableHash(`${account.id}:${planet.id || "home"}`);
   return {
     x: 8 + seed % (GALAXY_SPAN - 16),
     y: 8 + Math.floor(seed / 211) % (GALAXY_SPAN - 16),
+  };
+}
+function starterPosition(accounts, seedValue) {
+  if (!accounts.length) {
+    const seed = stableHash(seedValue);
+    return { x: 20 + seed % (GALAXY_SPAN - 40), y: 20 + Math.floor(seed / 223) % (GALAXY_SPAN - 40) };
+  }
+  const anchor = galaxyPosition(accounts[stableHash(seedValue) % accounts.length]);
+  const cellX = Math.floor(anchor.x / 16);
+  const cellY = Math.floor(anchor.y / 16);
+  const jitterX = (stableHash(`${seedValue}:x`) % 601) / 100 - 3;
+  const jitterY = (stableHash(`${seedValue}:y`) % 601) / 100 - 3;
+  return {
+    x: Math.max(5, Math.min(GALAXY_SPAN - 5, Math.max(cellX * 16 + 2, Math.min(cellX * 16 + 14, anchor.x + jitterX)))),
+    y: Math.max(5, Math.min(GALAXY_SPAN - 5, Math.max(cellY * 16 + 2, Math.min(cellY * 16 + 14, anchor.y + jitterY)))),
   };
 }
 function galaxyDistance(left, right) {
@@ -269,12 +320,15 @@ async function colonizeSite(key, targetId) {
     if (accounts.some(a => a.state.planets.some(p => p.id === targetId))) fail("Diese Welt wurde bereits besiedelt.", 409);
     if (galaxyDistance(galaxyPosition(activeGalaxyAccount(account)), site.position) > sensorRange(account)) fail("Ziel außerhalb der Sichtweite.", 403);
     if (!asWholeNumber(account.state.ships.colonyShip)) fail("Ein Kolonieschiff ist erforderlich.", 400);
-    if (account.state.planets.length >= 20) fail("Maximal 20 Welten möglich.", 400);
+    if (account.state.planets.length >= MAX_PLANETS) fail(`Maximal ${MAX_PLANETS} Welten möglich.`, 400);
     const types = [["temperate","Gemäßigte Welt"],["arid","Wüstenwelt"],["ocean","Ozeanwelt"],["ice","Eiswelt"],["volcanic","Vulkanwelt"]];
     const [type, classification] = types[randomBytes(1)[0] % types.length];
-    const planet = { id: site.id, name: site.signature, type, classification, fields: 96 + randomBytes(4).readUInt32BE() % 295, usedFields: 0, coordinates: `X ${site.position.x} · Y ${site.position.y}`, colonizedAt: Date.now(), homeworld: false };
+    const planet = { id: site.id, name: randomWorldName(`${account.id}:${site.id}`), type, classification, fields: 96 + randomBytes(4).readUInt32BE() % 295, usedFields: 1, coordinates: `X ${site.position.x.toFixed(1)} · Y ${site.position.y.toFixed(1)}`, colonizedAt: Date.now(), homeworld: false };
     planet.position = { ...site.position };
     planet.defenses = {};
+    planet.buildings = freshBuildings(false);
+    planet.buildingQueue = [];
+    planet.shipQueue = null;
     account.state.ships.colonyShip -= 1;
     account.state.planets.push(planet);
     account.state.activePlanetId = planet.id;
@@ -421,7 +475,7 @@ function spyReportFor(attacker, defender, probeCount) {
     } : null,
     resources: intelligence >= 1 ? Object.fromEntries(RESOURCE_KEYS.map((key) => [key, asWholeNumber(defender.state.resources?.[key])])) : null,
     ships: intelligence >= 3 ? Object.fromEntries(Object.entries(defender.state.ships || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
-    buildings: intelligence >= 4 ? Object.fromEntries(Object.entries(defender.state.buildings || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
+    buildings: intelligence >= 4 ? Object.fromEntries(Object.entries(planet.buildings || defender.state.buildings || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
     research: intelligence >= 5 ? Object.fromEntries(Object.entries(defender.state.research || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
     defenses: intelligence >= 4 ? Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(defenses[key])])) : null,
     activeMissions: intelligence >= 5 ? asWholeNumber(defender.state.missions?.length) : null,
@@ -447,7 +501,7 @@ function prepareRaid(attacker, defender, rawFleet) {
   const defenderAvionics = asWholeNumber(defender.state.research?.avionics);
   const attackPower = Math.floor(Object.entries(FLEET).reduce((sum,[key,item])=>sum+fleet[key]*item.power,0) * (1 + attackerAvionics * 0.08));
   const defenderShips = defender.state.ships || {};
-  const defenderBuildings = defender.state.buildings || {};
+  const defenderBuildings = primaryPlanet(defender).buildings || defender.state.buildings || {};
   const planetDefenses = primaryPlanet(defender).defenses || {};
   const defenseBase = Object.entries(FLEET).reduce((sum,[key,item])=>sum+asWholeNumber(defenderShips[key])*item.power,0)
     + Object.entries(DEFENSE).reduce((sum,[key,item])=>sum+asWholeNumber(planetDefenses[key])*item.power,0)
@@ -646,7 +700,8 @@ function clearSession(request, response) {
 }
 function publicAccount(account) { return { username: account.username, createdAt: account.createdAt }; }
 function score(player) {
-  const values = [...Object.values(player.buildings || {}), ...Object.values(player.research || {})];
+  const planetBuildings = (player.planets || []).flatMap((planet) => Object.values(planet.buildings || {}));
+  const values = [...(planetBuildings.length ? planetBuildings : Object.values(player.buildings || {})), ...Object.values(player.research || {})];
   const fleet = Object.values(player.ships || {}).reduce((sum, count) => sum + Number(count || 0) * 4, 0);
   return Math.floor(values.reduce((sum, level) => sum + Number(level || 0) ** 2 * 12, 0) + fleet);
 }
@@ -659,18 +714,32 @@ function isSafeState(state) {
 function saveableState(rawState, username) {
   if (!isSafeState(rawState)) return null;
   const state = structuredClone(rawState);
-  state.version = 3;
+  state.version = 4;
   state.commander = username;
   for (const group of [state.buildings, state.research]) {
     for (const key of Object.keys(group)) group[key] = Math.min(LEVEL_CAP, asWholeNumber(group[key]));
   }
+  const legacyBuildings = { ...state.buildings };
+  state.planets = state.planets.slice(0, MAX_PLANETS).map((planet, index) => {
+    const buildings = { ...(planet.buildings || (planet.homeworld || index === 0 ? legacyBuildings : freshBuildings(false))) };
+    for (const key of Object.keys(freshBuildings(false))) buildings[key] = Math.min(LEVEL_CAP, asWholeNumber(buildings[key]));
+    return {
+      ...planet,
+      name: cleanPlanetName(planet.name) || randomWorldName(`${username}:${planet.id || index}`),
+      buildings,
+      buildingQueue: Array.isArray(planet.buildingQueue) ? planet.buildingQueue.slice(0, 20) : [],
+      shipQueue: planet.shipQueue || null,
+      usedFields: Object.values(buildings).reduce((sum, level) => sum + asWholeNumber(level), 0),
+    };
+  });
+  const homeworld = state.planets.find((planet) => planet.homeworld) || state.planets[0];
+  state.buildings = { ...(homeworld?.buildings || legacyBuildings) };
   for (const resource of RESOURCE_KEYS) state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(state.resources[resource]));
   state.log = state.log.slice(0, 80);
   state.spyReports = Array.isArray(state.spyReports) ? state.spyReports.slice(0, 40) : [];
   state.combatReports = Array.isArray(state.combatReports) ? state.combatReports.slice(0, 40) : [];
   state.messages = Array.isArray(state.messages) ? state.messages.slice(0, 80) : [];
   state.notifications = Array.isArray(state.notifications) ? state.notifications.slice(0, 40) : [];
-  state.planets = state.planets.slice(0, 20);
   state.missions = state.missions.slice(0, 20);
   return state;
 }
@@ -722,7 +791,8 @@ const server = createServer(async (request, response) => {
       if (!password) return json(response, 400, { error: "Das Passwort braucht mindestens 8 Zeichen." });
       const key = accountKey(username);
       if (await accountByKey(key)) return json(response, 409, { error: "Dieser Kommandantenname ist bereits vergeben." });
-      const account = { id: randomBytes(12).toString("hex"), username, createdAt: Date.now(), password: await makePasswordRecord(password), state: defaultState(username) };
+      const id = randomBytes(12).toString("hex");
+      const account = { id, username, createdAt: Date.now(), password: await makePasswordRecord(password), state: defaultState(username, starterPosition(await allAccounts(), id)) };
       try {
       await mutate(() => createAccount(key, account));
       } catch (error) {
@@ -730,7 +800,7 @@ const server = createServer(async (request, response) => {
         throw error;
       }
       issueSession(response, key);
-      return json(response, 201, { user: publicAccount(account), state: account.state });
+      return json(response, 201, { user: publicAccount(account), state: account.state, capabilities: { testGrant: hasTestGrantAccess(account) } });
     }
     if (request.method === "POST" && url.pathname === "/api/auth/login") {
       const body = await readBody(request);
@@ -740,7 +810,7 @@ const server = createServer(async (request, response) => {
       const account = key && await accountByKey(key);
       if (!account || !(await passwordMatches(password, account.password))) return json(response, 401, { error: "Name oder Passwort ist nicht korrekt." });
       issueSession(response, key);
-      return json(response, 200, { user: publicAccount(account), state: account.state });
+      return json(response, 200, { user: publicAccount(account), state: account.state, capabilities: { testGrant: hasTestGrantAccess(account) } });
     }
     if (request.method === "POST" && url.pathname === "/api/auth/logout") {
       clearSession(request, response);
@@ -749,7 +819,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/session") {
       const current = await authenticatedAccount(request);
       if (!current) return json(response, 401, { error: "No active session" });
-      return json(response, 200, { user: publicAccount(current.account), state: current.account.state });
+      return json(response, 200, { user: publicAccount(current.account), state: current.account.state, capabilities: { testGrant: hasTestGrantAccess(current.account) } });
     }
     if (request.method === "GET" && url.pathname === "/api/state") {
       const current = await authenticatedAccount(request);
@@ -774,6 +844,45 @@ const server = createServer(async (request, response) => {
         .map((account) => ({ username: account.username, score: score(account.state), planets: account.state.planets?.length || 1 }))
         .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username, "de")).slice(0, 20);
       return json(response, 200, { players });
+    }
+    if (request.method === "POST" && url.pathname === "/api/planets/rename") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const body = await readBody(request);
+      const planetId = String(body.planetId || "");
+      const name = cleanPlanetName(body.name);
+      if (!name || name.length < 3) return json(response, 400, { error: "Der Planetenname braucht 3–28 Zeichen." });
+      const state = await mutate(async () => {
+        const account = await accountByKey(current.key);
+        const planet = account.state.planets.find((entry) => entry.id === planetId);
+        if (!planet) fail("Planet nicht gefunden.", 404);
+        planet.name = name;
+        account.state.revision = asWholeNumber(account.state.revision) + 1;
+        addStateLog(account.state, "system", `Planet umbenannt: ${name}.`);
+        await persistAccountState(current.key, account.state);
+        return account.state;
+      });
+      return json(response, 200, { state });
+    }
+    if (request.method === "POST" && url.pathname === "/api/test/grant-resources") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      if (!hasTestGrantAccess(current.account)) return json(response, 403, { error: "Diese Testfunktion ist für diesen Account nicht verfügbar." });
+      const body = await readBody(request);
+      const username = cleanUsername(body.username);
+      if (!username) return json(response, 400, { error: "Spielername erforderlich." });
+      const result = await mutate(async () => {
+        const key = accountKey(username);
+        const account = await accountByKey(key);
+        if (!account) fail("Account nicht gefunden.", 404);
+        for (const resource of RESOURCE_KEYS) account.state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(account.state.resources?.[resource]) + 50_000);
+        account.state.revision = asWholeNumber(account.state.revision) + 1;
+        addStateLog(account.state, "system", "Testlieferung: +50.000 Metall, Kristall und Tritium.");
+        addNotification(account.state, "system", "Testlieferung eingetroffen", `${current.account.username} hat dir 50.000 Einheiten jeder Ressource gesendet.`);
+        await persistAccountState(key, account.state);
+        return { username: account.username };
+      });
+      return json(response, 200, { ok: true, ...result });
     }
     if (request.method === "POST" && url.pathname === "/api/messages") {
       const current = await authenticatedAccount(request);
