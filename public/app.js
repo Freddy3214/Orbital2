@@ -1254,6 +1254,9 @@ restoreSession();
 setInterval(() => {
   if (!state || actionBusy || isSaving) return;
   synchronize();
+  const activeElement = document.activeElement;
+  const editingText = activeElement?.matches("input, textarea, [contenteditable='true']");
+  const selectingText = Boolean(window.getSelection?.().toString());
   if (activeView === "galaxy") {
     resourceTicker();
     const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
@@ -1261,7 +1264,7 @@ setInterval(() => {
       button.disabled = cooldown > 0 || state.ships.spyProbe < Number(button.dataset.probes);
       if (button.dataset.probes === "1") button.textContent = cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen";
     });
-  } else render();
+  } else if (!editingText && !selectingText) render();
   if (Date.now() % 5_000 < 1300) save({ quiet: true });
   if (activeView === "overview") fetchLeaderboard();
   if (activeView === "galaxy") fetchGalaxy();
