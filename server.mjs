@@ -100,6 +100,24 @@ async function initializeStorage() {
   `);
 }
 const storageReady = initializeStorage();
+async function applyLordFredoCredit() {
+  if (process.env.APPLY_LORD_FREDO_CREDIT !== "yes") return;
+  await mutate(async () => {
+    const key = accountKey("Lord Fredo");
+    const account = await accountByKey(key);
+    if (!account) throw new Error("Lord Fredo account not found");
+    const creditId = "lord-fredo-20260918-20000";
+    account.state.adminCredits = Array.isArray(account.state.adminCredits) ? account.state.adminCredits : [];
+    if (account.state.adminCredits.includes(creditId)) return;
+    for (const resource of RESOURCE_KEYS) account.state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(account.state.resources?.[resource]) + 20_000);
+    account.state.adminCredits = [...account.state.adminCredits, creditId];
+    account.state.revision = asWholeNumber(account.state.revision) + 1;
+    addStateLog(account.state, "system", "Admin-Gutschrift: +20.000 Metall, Kristall und Tritium.");
+    if (pool) await pool.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(account.state)]);
+    else { const database = await loadLocalDatabase(); database.accounts[key].state = account.state; await saveLocalDatabase(database); }
+    console.log("One-time Lord Fredo credit applied.");
+  });
+}
 async function accountByKey(key) {
   if (pool) {
     const result = await pool.query(
@@ -838,7 +856,8 @@ setInterval(() => {
   for (const [id, session] of sessions) if (session.expiresAt <= now) sessions.delete(id);
 }, 1000 * 60 * 15).unref();
 
-storageReady.then(() => {
+storageReady.then(async () => {
+  await applyLordFredoCredit();
   server.listen(port, () => console.log(`Orbital Foundry is live at http://localhost:${port}`));
 }).catch((error) => {
   console.error("Database initialization failed", error);
