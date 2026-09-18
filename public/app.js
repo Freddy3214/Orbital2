@@ -222,6 +222,7 @@ let mapGesture = null;
 let suppressMapClickUntil = 0;
 let galaxyOffset = { x: 0, y: 0 };
 let selectedSignalId = null;
+let selectedOrbitTargetId = null;
 let galaxyError = "";
 let actionBusy = false;
 let galaxyLoading = false;
@@ -575,7 +576,7 @@ async function fetchGalaxy({ force = false } = {}) {
     const response = await fetch("/api/galaxy", { credentials: "same-origin" });
     if (!response.ok) throw new Error("Sensorverbindung nicht verfügbar.");
     const payload = await response.json();
-    galaxyIntel = Array.isArray(payload.contacts) ? payload.contacts : [];
+    galaxyIntel = Array.isArray(payload.systems) ? payload.systems : [];
     galaxyOrigin = payload.origin;
     galaxyRadius = payload.radius;
     galaxyError = "";
@@ -852,6 +853,7 @@ async function colonizeTarget(targetId) {
     state = payload.state;
     ensureStateShape();
     selectedSignalId = null;
+    selectedOrbitTargetId = null;
     galaxyOffset = { x: 0, y: 0 };
     toast(`${payload.planet.name} besiedelt · ${payload.planet.fields} Baufelder`);
   } catch (error) { toast(error.message, true); }
@@ -890,15 +892,21 @@ function fleetSelector() {
   return `<details class="fleet-selector" open><summary>Einsatzflotte zusammenstellen</summary>${Object.entries(FLEET).map(([key,item])=>`<label><span>${SHIPS[key].name} <small>(${state.ships[key]||0} verfügbar)</small></span><input type="number" inputmode="numeric" min="0" max="${state.ships[key]||0}" step="1" value="${raidSelection[key]||0}" data-fleet-key="${key}" aria-label="${SHIPS[key].name} einsetzen"></label>`).join("")}<p>Nur die gewählten Schiffe starten. PvP-Angriffe werden derzeit sofort aufgelöst.</p></details>`;
 }
 function galaxyInspector() {
-  const signal = galaxyIntel.find((contact) => contact.id === selectedSignalId);
-  if (signal?.free) return `<aside class="galaxy-inspector"><span class="eyebrow">FREIE WELT · ${galaxyCoordinates(signal.position)}</span><h2>${escapeHtml(signal.signature)}</h2><p>Unbesiedelt · ${signal.distance} Sektoren entfernt. Größe und Beschaffenheit werden erst bei der Besiedlung bekannt.</p><p>Ein Kolonieschiff wird verbraucht. Die Besiedlung wird derzeit sofort abgeschlossen.</p><button class="primary-button" data-colonize="${escapeHtml(signal.id)}" ${!state.ships.colonyShip || actionBusy ? "disabled" : ""}>${state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button><p>Spionage und Angriffe sind nur bei besetzten Welten verfügbar.</p></aside>`;
-  if (!signal) return `<aside class="galaxy-inspector"><span class="eyebrow">SIGNALANALYSE</span><div class="scanner-symbol">◎</div><h2>Was liegt im Dunkeln?</h2><p>Wähle einen weißen Punkt. Der Name gehört zur Welt; ihr Besitzer bleibt bis zur erfolgreichen Aufklärung unbekannt.</p><p>Erforsche Tiefraumsensorik, um deinen Sichtkreis zu erweitern. Baue Aufklärsonden in der Werft.</p><div class="sensor-stat"><span>Aufklärsonden</span><strong>${state.ships.spyProbe}</strong></div></aside>`;
-  const report = currentReport(signal.id);
+  const system = galaxyIntel.find((contact) => contact.id === selectedSignalId);
+  if (!system) return `<aside class="galaxy-inspector"><span class="eyebrow">SYSTEMSCAN</span><div class="scanner-symbol">◎</div><h2>Wähle einen Stern</h2><p>Jeder große Lichtpunkt ist ein Sternsystem. Seine Helligkeit zeigt an, wie viele freie oder bewohnte Welten die Sensoren dort erfassen.</p><p>Ein Klick öffnet die 13 Orbitalpositionen. Spielernamen erscheinen nur im Systemfenster, nicht auf der Sternkarte.</p><div class="sensor-stat"><span>Aufklärsonden</span><strong>${state.ships.spyProbe}</strong></div></aside>`;
+  const target = system.slots.find((slot) => slot.targetId === selectedOrbitTargetId);
+  const slotList = `<div class="orbit-list" aria-label="Orbitalpositionen 1 bis 13">${system.slots.map((slot) => slot.empty
+    ? `<div class="orbit-slot empty"><strong>${slot.position}</strong><span>Leerer Orbit</span><small>—</small></div>`
+    : `<button class="orbit-slot ${slot.free ? "free" : "occupied"} ${slot.targetId === selectedOrbitTargetId ? "selected" : ""}" data-orbit-target="${escapeHtml(slot.targetId)}"><strong>${slot.position}</strong><span>${escapeHtml(slot.name)}</span><small>${slot.free ? "Frei · unbekannte Größe" : `Spieler · ${escapeHtml(slot.owner || "Unbekannt")}`}</small></button>`).join("")}</div>`;
+  const summary = `<span class="eyebrow">${galaxyCoordinates(system.position)} · ${system.distance} SEKTOREN</span><h2>${escapeHtml(system.signature)}</h2><p>${system.planetCount} sichtbare Welten · ${system.occupiedCount} bewohnt · ${system.freeCount} frei</p>${slotList}`;
+  if (!target) return `<aside class="galaxy-inspector">${summary}<div class="intel-locked">Wähle eine belegte Position für Spionage oder Angriff – oder eine freie Welt zur Kolonisierung.</div></aside>`;
+  if (target.free) return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · FREIE WELT</span><h3>${escapeHtml(target.name)}</h3><p>Größe und Beschaffenheit werden erst bei der Besiedlung bekannt. Ein Kolonieschiff wird verbraucht.</p><button class="primary-button" data-colonize="${escapeHtml(target.targetId)}" ${!state.ships.colonyShip || actionBusy ? "disabled" : ""}>${state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button></section></aside>`;
+  const report = currentReport(target.targetId);
   const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
-  return `<aside class="galaxy-inspector"><span class="eyebrow">ZIEL ERFASST · ${galaxyCoordinates(signal.position)}</span><h2>${escapeHtml(signal.signature)}</h2><p>${signal.distance} Sektoren entfernt · fremde Welt</p>
-  <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(signal.id)}" ${!report || actionBusy || !Object.keys(FLEET).some(key=>state.ships[key]>0) ? "disabled" : ""}>Ausgewählte Flotte angreifen lassen</button></div>${fleetSelector()}
+  return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · BESIEDELT</span><h3>${escapeHtml(target.name)}</h3><p>Kolonie von <strong>${escapeHtml(target.owner || "Unbekannt")}</strong>. Für Wirtschaft, Flotte und Verteidigung ist weiterhin ein Sondenscan nötig.</p>
+  <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(target.targetId)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(target.targetId)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(target.targetId)}" ${!report || actionBusy || !Object.keys(FLEET).some(key=>state.ships[key]>0) ? "disabled" : ""}>Ausgewählte Flotte angreifen lassen</button></div>${fleetSelector()}
   ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/4</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString("de-DE")} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}${reportSection("Planetare Abwehr", report.defenses, DEFENSE)}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
-  </aside>`;
+  </section></aside>`;
 }
 function galaxyView() {
   const size = 100 / galaxyZoom;
@@ -910,16 +918,16 @@ function galaxyView() {
   const target = selected ? point(selected.position) : null;
   const stars = "";
   const space = `<svg class="survey-field" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="survey-window"><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}"/></clipPath></defs><g clip-path="url(#survey-window)"><rect width="100" height="100" fill="#020309"/>${stars}</g><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}" fill="none" stroke="#73ae82" stroke-width=".12"/><path d="M ${origin.x} 0 V 100 M 0 ${origin.y} H 100" stroke="#59ba73" stroke-width=".12"/>${target ? `<path d="M ${target.x} 0 V 100 M 0 ${target.y} H 100" stroke="#e16e87" stroke-width=".15"/>` : ""}</svg>`;
-  const markers = galaxyIntel.map((signal) => {
-    const p = point(signal.position);
+  const markers = galaxyIntel.map((system) => {
+    const p = point(system.position);
     if (p.x < 2 || p.x > 97 || p.y < 3 || p.y > 95) return "";
-    return `<button class="signal-point ${signal.free ? "free-signal" : "occupied-signal"} ${signal.id === selectedSignalId ? "selected" : ""}" style="left:${p.x}%;top:${p.y}%" data-signal-id="${escapeHtml(signal.id)}" aria-label="${signal.free ? "Freie Welt" : "Besetzte Welt"} ${escapeHtml(signal.signature)} bei ${galaxyCoordinates(signal.position)}"><i></i><span>${escapeHtml(signal.signature)}</span></button>`;
+    return `<button class="signal-point system-signal ${system.id === selectedSignalId ? "selected" : ""}" style="left:${p.x}%;top:${p.y}%;--star-size:${system.starSize}px;--star-light:${system.luminosity}" data-signal-id="${escapeHtml(system.id)}" aria-label="${escapeHtml(system.signature)} mit ${system.planetCount} sichtbaren Welten bei ${galaxyCoordinates(system.position)}"><i></i><span>${escapeHtml(system.signature)} · ${system.planetCount} Welten</span></button>`;
   }).join("");
-  return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Grau: unerforscht · Grün: aktive Welt · Rot: ausgewähltes Ziel</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
+  return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Je heller ein Stern leuchtet, desto mehr freie oder bewohnte Welten enthält sein System.</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
   <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="home">Heimat zentrieren</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
-  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SIGNALE<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Weißen Stern für Aktionen anklicken.</small></div></section>${galaxyInspector()}</div>
-  <section class="contact-console"><div class="panel-title"><h2>Erfasste Welten</h2><span>${galaxyIntel.length} KONTAKTE</span></div><table><thead><tr><th>Planet</th><th>X : Y</th><th>Entfernung</th><th>Aufklärung</th></tr></thead><tbody>${galaxyIntel.map(signal => `<tr class="${signal.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(signal.id)}">${escapeHtml(signal.signature)}</button></td><td>${galaxyCoordinates(signal.position)}</td><td>${signal.distance} Sektoren</td><td>${signal.free ? "Frei · besiedelbar" : currentReport(signal.id) ? "Bericht verfügbar" : "Besetzt"}</td></tr>`).join("") || `<tr><td colspan="4">Keine fremden Welten im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
+  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SYSTEME<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Stern anklicken, dann eine Position 1–13 wählen.</small></div></section>${galaxyInspector()}</div>
+  <section class="contact-console"><div class="panel-title"><h2>Erfasste Sternsysteme</h2><span>${galaxyIntel.length} SYSTEME</span></div><table><thead><tr><th>System</th><th>X : Y</th><th>Entfernung</th><th>Welten</th></tr></thead><tbody>${galaxyIntel.map(system => `<tr class="${system.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(system.id)}">${escapeHtml(system.signature)}</button></td><td>${galaxyCoordinates(system.position)}</td><td>${system.distance} Sektoren</td><td>${system.planetCount} sichtbar · ${system.occupiedCount} bewohnt</td></tr>`).join("") || `<tr><td colspan="4">Keine Systeme im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
   <section class="panel galaxy-flight-panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenbewegungen</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section>
   <section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Expeditionen & Kolonisierung</h2><span>NEUTRALE ZIELE</span></div>${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
 }
@@ -1080,6 +1088,12 @@ content.addEventListener("click", (event) => {
   if (button.dataset.signalId) {
     if (Date.now() < suppressMapClickUntil) return;
     selectedSignalId = button.dataset.signalId;
+    selectedOrbitTargetId = null;
+    raidSelection = {};
+    render(); return;
+  }
+  if (button.dataset.orbitTarget) {
+    selectedOrbitTargetId = button.dataset.orbitTarget;
     raidSelection = {};
     render(); return;
   }
@@ -1129,6 +1143,7 @@ $("#planet-switch").addEventListener("change", async (event) => {
   state.activePlanetId = event.target.value;
   galaxyOffset = { x: 0, y: 0 };
   selectedSignalId = null;
+  selectedOrbitTargetId = null;
   await save({ quiet: true });
   await fetchGalaxy({ force: true });
   render();
