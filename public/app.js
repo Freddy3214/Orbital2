@@ -216,11 +216,13 @@ let authMode = "register";
 let galaxyIntel = [];
 let galaxyOrigin = { x: 50, y: 50 };
 let galaxyRadius = 14;
+let galaxySpan = 220;
 let galaxyZoom = 1;
 let raidSelection = {};
 let mapGesture = null;
 let suppressMapClickUntil = 0;
 let galaxyOffset = { x: 0, y: 0 };
+let galaxyMapInitialized = false;
 let selectedSignalId = null;
 let selectedOrbitTargetId = null;
 let galaxyError = "";
@@ -579,6 +581,11 @@ async function fetchGalaxy({ force = false } = {}) {
     galaxyIntel = Array.isArray(payload.systems) ? payload.systems : [];
     galaxyOrigin = payload.origin;
     galaxyRadius = payload.radius;
+    galaxySpan = Number(payload.span) || 220;
+    if (!galaxyMapInitialized) {
+      galaxyOffset = { x: galaxySpan / 2 - galaxyOrigin.x, y: galaxySpan / 2 - galaxyOrigin.y };
+      galaxyMapInitialized = true;
+    }
     galaxyError = "";
   } catch { galaxyError = "Sensorverbindung unterbrochen. Erneut scannen.";
   } finally {
@@ -909,7 +916,7 @@ function galaxyInspector() {
   </section></aside>`;
 }
 function galaxyView() {
-  const size = 100 / galaxyZoom;
+  const size = galaxySpan / galaxyZoom;
   const center = { x: galaxyOrigin.x + galaxyOffset.x, y: galaxyOrigin.y + galaxyOffset.y };
   const left = center.x - size / 2, top = center.y - size / 2;
   const point = (p) => ({ x: (p.x - left) / size * 100, y: (p.y - top) / size * 100 });
@@ -926,7 +933,7 @@ function galaxyView() {
   return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Je heller ein Stern leuchtet, desto mehr freie oder bewohnte Welten enthält sein System.</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
   <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="home">Heimat zentrieren</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
-  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SYSTEME<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Stern anklicken, dann eine Position 1–13 wählen.</small></div></section>${galaxyInspector()}</div>
+  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SYSTEME · KARTENRAUM ${galaxySpan} × ${galaxySpan}<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Stern anklicken, dann eine Position 1–13 wählen.</small></div></section>${galaxyInspector()}</div>
   <section class="contact-console"><div class="panel-title"><h2>Erfasste Sternsysteme</h2><span>${galaxyIntel.length} SYSTEME</span></div><table><thead><tr><th>System</th><th>X : Y</th><th>Entfernung</th><th>Welten</th></tr></thead><tbody>${galaxyIntel.map(system => `<tr class="${system.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(system.id)}">${escapeHtml(system.signature)}</button></td><td>${galaxyCoordinates(system.position)}</td><td>${system.distance} Sektoren</td><td>${system.planetCount} sichtbar · ${system.occupiedCount} bewohnt</td></tr>`).join("") || `<tr><td colspan="4">Keine Systeme im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
   <section class="panel galaxy-flight-panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenbewegungen</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section>
   <section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Expeditionen & Kolonisierung</h2><span>NEUTRALE ZIELE</span></div>${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
@@ -1059,7 +1066,7 @@ content.addEventListener("pointermove", event => {
   if (Math.hypot(dx,dy)<5 && !mapGesture.moved) return;
   mapGesture.moved = true;
   content.setPointerCapture(event.pointerId);
-  galaxyOffset = {x:Math.max(-100,Math.min(100,mapGesture.offset.x-dx/mapGesture.size*100/galaxyZoom)),y:Math.max(-100,Math.min(100,mapGesture.offset.y-dy/mapGesture.size*100/galaxyZoom))};
+  galaxyOffset = {x:Math.max(-galaxySpan,Math.min(galaxySpan,mapGesture.offset.x-dx/mapGesture.size*galaxySpan/galaxyZoom)),y:Math.max(-galaxySpan,Math.min(galaxySpan,mapGesture.offset.y-dy/mapGesture.size*galaxySpan/galaxyZoom))};
   render();
 });
 const finishMapGesture = event => {
@@ -1075,9 +1082,9 @@ content.addEventListener("wheel", event => {
   const map=event.target.closest(".universe-map");
   if (!map) return;
   event.preventDefault();
-  const rect=map.getBoundingClientRect(), oldSize=100/galaxyZoom;
+  const rect=map.getBoundingClientRect(), oldSize=galaxySpan/galaxyZoom;
   galaxyZoom=Math.max(.5,Math.min(5,galaxyZoom*(event.deltaY>0?.85:1.18)));
-  const diff=oldSize-100/galaxyZoom;
+  const diff=oldSize-galaxySpan/galaxyZoom;
   galaxyOffset.x+=((event.clientX-rect.left)/rect.width-.5)*diff;
   galaxyOffset.y+=((event.clientY-rect.top)/rect.height-.5)*diff;
   render();
@@ -1102,7 +1109,7 @@ content.addEventListener("click", (event) => {
   if (button.dataset.spyTarget) { spyTarget(button.dataset.spyTarget, Number(button.dataset.probes)); return; }
   if (button.dataset.mapAction) {
     const action = button.dataset.mapAction;
-    const step = 15 / galaxyZoom;
+    const step = galaxySpan * .15 / galaxyZoom;
     if (action === "left") galaxyOffset.x -= step;
     if (action === "right") galaxyOffset.x += step;
     if (action === "up") galaxyOffset.y -= step;
