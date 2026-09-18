@@ -105,6 +105,15 @@ const RESEARCH = {
       requirement(s.research.energyTech >= 3, "Energietechnik Stufe 3"),
     ],
   },
+  constructionEngineering: {
+    icon: "⌁", image: "/assets/robotics-factory.svg", name: "Konstruktionslogistik", factor: 1.9, base: { metal: 400, crystal: 650, tritium: 200 },
+    description: "Optimiert Montagepläne, Materialfluss und Schichtbetrieb für langfristige Bauprojekte.",
+    detail: (level) => `Bauzeitverkürzung: +${level * 12}% Bautempo`,
+    requires: (s) => [
+      requirement(s.buildings.researchLab >= 2, "Forschungslabor Stufe 2"),
+      requirement(s.buildings.roboticsFactory >= 4, "Roboterfabrik Stufe 4"),
+    ],
+  },
 };
 
 BUILDINGS.solarPlant.image = "https://images.pexels.com/photos/11455626/pexels-photo-11455626.jpeg?auto=compress&w=600";
@@ -276,7 +285,7 @@ function createColony() {
 function ensureStateShape() {
   for (const key of Object.keys(SHIPS)) if (!SHIPS[key].isDefense) state.ships[key] ??= 0;
   for (const planet of state.planets || []) planet.defenses ??= {};
-  state.research.deepSpaceSensors ??= 0;
+  for (const key of Object.keys(RESEARCH)) state.research[key] ??= 0;
   state.ships.spyProbe ??= 0;
   state.spyReports ??= [];
   for (const group of [state.buildings, state.research]) {
@@ -343,7 +352,16 @@ function playerScore() {
   const levels = [...Object.values(state.buildings), ...Object.values(state.research)];
   return Math.floor(levels.reduce((sum, level) => sum + level ** 2 * 12, 0) + Object.values(state.ships).reduce((sum, count) => sum + count * 4, 0));
 }
-function buildTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (100 * (1 + state.buildings.roboticsFactory))) * 1000); }
+function buildTime(cost, targetLevel = 1) {
+  const level = Math.max(1, Number(targetLevel) || 1);
+  const resourceSeconds = (cost.metal + cost.crystal + cost.tritium) / 40;
+  const progressionSeconds = 45 * 1.45 ** (level - 1);
+  const rawSeconds = Math.min(90 * 24 * 60 * 60, Math.max(resourceSeconds, progressionSeconds));
+  const robotics = Math.min(100, state.buildings.roboticsFactory || 0);
+  const logistics = Math.min(100, state.research.constructionEngineering || 0);
+  const speed = 1 + robotics * .08 + logistics * .12;
+  return Math.max(15000, (rawSeconds / speed) * 1000);
+}
 function researchTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + state.buildings.researchLab))) * 1000); }
 function shipTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (105 * (1 + state.buildings.shipyard))) * 1000); }
 
@@ -375,7 +393,7 @@ function activateNextBuilding(at = Date.now()) {
   const next = buildingQueue()[0];
   if (!next || next.startedAt) return;
   next.startedAt = at;
-  next.completesAt = at + buildTime(next.cost || getCost(BUILDINGS[next.key], next.targetLevel));
+  next.completesAt = at + buildTime(next.cost || getCost(BUILDINGS[next.key], next.targetLevel), next.targetLevel);
 }
 function resolveQueues(at) {
   const activeBuilding = buildingQueue()[0];
@@ -717,7 +735,7 @@ function entityCard(kind, key, config, level, cost, requirements, queueKind) {
     ? `<div class="build-actions"><button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-build="${key}" ${disabled ? "disabled" : ""}>${action}</button><button class="secondary-button" data-build-batch="${key}" data-amount="3" ${disabled ? "disabled" : ""}>+3 planen</button></div>`
     : `<button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-${kind}="${key}" ${disabled ? "disabled" : ""}>${action}</button>`;
   const levelDisplay = atCap ? `<strong>${LEVEL_CAP}</strong> · MAX` : `<strong>${level}</strong> → <strong>${target}</strong>`;
-  const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Erster Abschluss in ${formatDuration(isBuilding ? buildTime(cost) : researchTime(cost))}</span>`;
+  const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Erster Abschluss in ${formatDuration(isBuilding ? buildTime(cost, target) : researchTime(cost))}</span>`;
   return `<article class="entity-card entity-card--${kind} entity-card--${key} ${locked || noFields ? "locked" : ""}" style="--level-progress:${Math.min(100, level)}%"><img class="entity-art" src="${config.image}" alt="Illustration ${escapeHtml(config.name)}"><div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><div class="level-meter" aria-label="Stufe ${level} von 100"><i></i></div><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>Felder beim Erstbau: ${config.fieldCost}</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
 }
 function energyUseFor(key, level) {
@@ -730,7 +748,7 @@ function buildingsView() {
   const infrastructure = Object.entries(BUILDINGS).filter(([, item]) => item.group === "Infrastruktur");
   const projected = projectedBuildingState();
   const makeGroup = (title, entries) => `<section class="entity-list"><div class="panel-title"><h2>${title}</h2><span>${title === "Ökonomie" ? "PRODUKTION UND ENERGIE" : "KOLONIALE SYSTEME"}</span></div>${entries.map(([key, config]) => { const level = state.buildings[key]; const cost = getCost(config, projected.buildings[key] + 1); const requirements = config.requires ? config.requires(projected) : []; return entityCard("build", key, config, level, cost, requirements, "building"); }).join("")}</section>`;
-  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Plane mehrere Ausbauten vor: Baufelder werden nur beim Erstbau belegt, jeder weitere Ausbau derselben Anlage benötigt keinen zusätzlichen Bauplatz.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · ${buildingQueue().length} IN BAUREIHE</span></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · ${buildingQueue().length} IN BAUREIHE</span></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
 }
 function researchView() {
   return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Jedes Laborlevel verkürzt die Laufzeit eines Projekts.</p></div><span class="sector-label">LABOR STUFE ${state.buildings.researchLab}</span></section><section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, level + 1); return entityCard("research", key, config, level, cost, config.requires(state), "research"); }).join("")}</section>`;
