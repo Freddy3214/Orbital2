@@ -25,7 +25,7 @@ const BUILDINGS = {
     detail: (level) => `Produktion: ${formatNumber(tritiumOutput(level))} Tritium / h`,
   },
   solarPlant: {
-    icon: "☼", image: "/assets/solar-array.svg", fieldCost: 2, name: "Solarkraftwerk", group: "Ökonomie", factor: 1.5, base: { metal: 75, crystal: 30 },
+    icon: "☼", image: "/assets/solar-array.svg", fieldCost: 1, name: "Solarkraftwerk", group: "Infrastruktur", factor: 1.5, base: { metal: 75, crystal: 30 },
     description: "Versorgt die Industriezonen mit sauberer Energie.",
     detail: (level) => `Leistung: ${formatNumber(energySupply(level))} Energie`,
   },
@@ -149,6 +149,7 @@ const SHIPS = {
     ],
   },
 };
+const SHIPYARD_ORDER = ["spyProbe", "colonyShip", "cargoDrone", "smallTransport", "mediumTransport", "largeTransport", "interceptor", "frigate", "cruiser", "battleship", "destroyer"];
 
 for (const [key,item] of Object.entries(FLEET)) if (item.name) SHIPS[key] = {
   ...item, icon:key.includes("Transport") ? "▱" : "➤", image:key.includes("Transport") ? "/assets/cargo-drone.svg" : "/assets/interceptor.svg",
@@ -233,6 +234,7 @@ let lastGalaxyFetch = 0;
 let playerSearchResults = [];
 let messageRecipient = "";
 let messageSubject = "";
+let canGrantTestResources = false;
 
 const PLANET_TYPES = {
   temperate: { name: "Gemäßigte Welt", terrain: "Grünland, Meere und Gebirgsketten", position: "0% 0%", accent: "cyan" },
@@ -281,22 +283,23 @@ function addLog(type, text) {
   state.log.unshift({ at: Date.now(), type, text });
   state.log = state.log.slice(0, 80);
 }
-function calculatedHomeFields() {
-  return Object.entries(state.buildings).reduce((sum, [key, level]) => sum + (level > 0 ? (BUILDINGS[key]?.fieldCost || 1) : 0), 0);
-}
 function activePlanet() {
   return state.planets.find((planet) => planet.id === state.activePlanetId) || state.planets[0];
 }
+function planetBuildings(planet = activePlanet()) { return planet?.buildings || state.buildings || {}; }
+function planetState(planet = activePlanet()) { return { ...state, buildings: planetBuildings(planet) }; }
+function calculatedPlanetFields(planet = activePlanet()) {
+  return Object.values(planetBuildings(planet)).reduce((sum, level) => sum + Math.max(0, Math.floor(Number(level) || 0)), 0);
+}
 function fieldUsage(planet = activePlanet()) {
-  return planet.homeworld ? calculatedHomeFields() : planet.usedFields;
+  return calculatedPlanetFields(planet);
 }
 function availableFields(planet = activePlanet()) {
   return Math.max(0, planet.fields - fieldUsage(planet));
 }
 function hasFreeFields(config, key = "") {
-  const reserved = buildingQueue().reduce((sum, item) => sum + (item.targetLevel === 1 ? (BUILDINGS[item.key]?.fieldCost || 0) : 0), 0);
-  const initialConstruction = key ? projectedBuildingLevel(key) === 0 : false;
-  return availableFields() - reserved >= (initialConstruction ? (config.fieldCost || 0) : 0);
+  const reserved = buildingQueue().length;
+  return availableFields() - reserved >= 1;
 }
 function planetSizeLabel(fields) {
   if (fields < 160) return "Kleiner Planet";
@@ -316,50 +319,66 @@ function createColony() {
     type: typeKey,
     classification: type.name,
     fields,
-    usedFields: 6,
+    usedFields: 1,
     coordinates: `G 02 · Sektor ${20 + count} · Orbit ${2 + Math.floor(Math.random() * 13)}`,
     colonizedAt: Date.now(),
     homeworld: false,
+    buildings: Object.fromEntries(Object.keys(BUILDINGS).map((key) => [key, key === "commandCenter" ? 1 : 0])),
+    buildingQueue: [],
+    shipQueue: null,
+    defenses: {},
   };
 }
 function ensureStateShape() {
   for (const key of Object.keys(SHIPS)) if (!SHIPS[key].isDefense) state.ships[key] ??= 0;
-  for (const planet of state.planets || []) planet.defenses ??= {};
   for (const key of Object.keys(RESEARCH)) state.research[key] ??= 0;
   state.ships.spyProbe ??= 0;
   state.spyReports ??= [];
   state.combatReports ??= [];
   state.messages ??= [];
   state.notifications ??= [];
-  for (const group of [state.buildings, state.research]) {
-    for (const key of Object.keys(group || {})) group[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(group[key]) || 0)));
-  }
+  for (const key of Object.keys(state.research || {})) state.research[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(state.research[key]) || 0)));
   state.ships.colonyShip ??= 0;
+  const legacyBuildings = { ...(state.buildings || {}) };
+  const emptyBuildings = () => Object.fromEntries(Object.keys(BUILDINGS).map((key) => [key, key === "commandCenter" ? 1 : 0]));
   if (!Array.isArray(state.planets) || !state.planets.length) {
-    state.planets = [{ id: "vesta-prime", name: "Vesta Prime", type: "temperate", classification: "Gemäßigte Welt", fields: 228, usedFields: 0, coordinates: "G 02 · Sektor 17 · Orbit 04", colonizedAt: state.createdAt || Date.now(), homeworld: true }];
+    state.planets = [{ id: "vesta-prime", name: "Vesta Prime", type: "temperate", classification: "Gemäßigte Welt", fields: 228, usedFields: 3, coordinates: "G 02 · Sektor 17 · Orbit 04", colonizedAt: state.createdAt || Date.now(), homeworld: true }];
   }
-  state.activePlanetId ??= state.planets[0].id;
   state.queues ??= {};
-  if (!Array.isArray(state.queues.building)) state.queues.building = state.queues.building ? [state.queues.building] : [];
+  const legacyBuildingQueue = Array.isArray(state.queues.building) ? state.queues.building : state.queues.building ? [state.queues.building] : [];
+  const legacyShipQueue = state.queues.ship || null;
   state.queues.research ??= null;
-  state.queues.ship ??= null;
   state.planets = state.planets.map((planet, index) => ({
     id: planet.id || `planet-${index}`,
     name: planet.name || `Kolonie ${index}`,
     type: PLANET_TYPES[planet.type] ? planet.type : "temperate",
     classification: planet.classification || PLANET_TYPES[planet.type]?.name || "Gemäßigte Welt",
     fields: Math.max(96, Math.min(390, Number(planet.fields) || 228)),
-    usedFields: Number(planet.usedFields) || 6,
+    usedFields: Math.max(0, Number(planet.usedFields) || 0),
     coordinates: planet.coordinates || "Unbekannte Koordinaten",
     colonizedAt: planet.colonizedAt || Date.now(),
     homeworld: Boolean(planet.homeworld || index === 0),
+    position: planet.position,
+    buildings: { ...(planet.buildings || (planet.homeworld || index === 0 ? legacyBuildings : emptyBuildings())) },
+    buildingQueue: Array.isArray(planet.buildingQueue) ? planet.buildingQueue : (planet.homeworld || index === 0 ? legacyBuildingQueue : []),
+    shipQueue: planet.shipQueue || (legacyShipQueue?.planetId === planet.id || (!legacyShipQueue?.planetId && (planet.homeworld || index === 0)) ? legacyShipQueue : null),
+    defenses: planet.defenses || {},
   }));
+  for (const planet of state.planets) {
+    const defaults = emptyBuildings();
+    for (const key of Object.keys(defaults)) planet.buildings[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(planet.buildings[key] ?? defaults[key]) || 0)));
+    planet.usedFields = calculatedPlanetFields(planet);
+  }
+  state.activePlanetId = state.planets.some((planet) => planet.id === state.activePlanetId) ? state.activePlanetId : state.planets[0].id;
   const homeworld = state.planets.find((planet) => planet.homeworld);
-  if (homeworld) homeworld.usedFields = calculatedHomeFields();
+  state.buildings = { ...(homeworld?.buildings || legacyBuildings) };
+  state.queues.building = [];
+  state.queues.ship = null;
 }
-function buildingQueue() { return Array.isArray(state?.queues?.building) ? state.queues.building : []; }
-function constructionSpeedFactor() {
-  return 1 + Math.min(100, state.buildings.roboticsFactory || 0) * .08 + Math.min(100, state.research.constructionEngineering || 0) * .12;
+function buildingQueue(planet = activePlanet()) { return Array.isArray(planet?.buildingQueue) ? planet.buildingQueue : []; }
+function shipQueue(planet = activePlanet()) { return planet?.shipQueue || null; }
+function constructionSpeedFactor(planet = activePlanet()) {
+  return 1 + Math.min(100, planetBuildings(planet).roboticsFactory || 0) * .08 + Math.min(100, state.research.constructionEngineering || 0) * .12;
 }
 function buildingQueueSchedule(now = Date.now()) {
   let cursor = now;
@@ -371,15 +390,15 @@ function buildingQueueSchedule(now = Date.now()) {
     return { queue, index, start, end, duration };
   });
 }
-function projectedBuildingLevel(key) { return (state.buildings[key] || 0) + buildingQueue().filter((item) => item.key === key).length; }
+function projectedBuildingLevel(key) { return (planetBuildings()[key] || 0) + buildingQueue().filter((item) => item.key === key).length; }
 function projectedBuildingState() {
-  const projected = { ...state, buildings: { ...state.buildings } };
+  const projected = { ...state, buildings: { ...planetBuildings() } };
   for (const item of buildingQueue()) projected.buildings[item.key] = item.targetLevel;
   return projected;
 }
 function planetArtMarkup(planet, className = "") {
   const type = PLANET_TYPES[planet.type] || PLANET_TYPES.temperate;
-  return `<span class="planet-art ${className}" style="--planet-position:${type.position}" role="img" aria-label="${escapeHtml(type.name)}: ${escapeHtml(type.terrain)}"></span>`;
+  return `<span class="planet-art ${className}" style="--planet-position:${type.position}" role="img" aria-label="${escapeHtml(type.name)}: ${escapeHtml(type.terrain)}"><i aria-hidden="true"></i></span>`;
 }
 function entityArtMarkup(config) {
   if (config.atlas) return `<span class="entity-art atlas-art" style="--art-image:url('${config.atlas}');--art-ratio:${config.atlasRatio};--art-x:${config.artX};--art-y:${config.artY}" role="img" aria-label="Illustration ${escapeHtml(config.name)}"></span>`;
@@ -390,17 +409,17 @@ function metalOutput(level) { return Math.floor(30 * level * 1.1 ** level) + 30;
 function crystalOutput(level) { return Math.floor(20 * level * 1.1 ** level) + 15; }
 function tritiumOutput(level) { return Math.floor(10 * level * 1.1 ** level); }
 function energySupply(level) { return Math.floor(20 * level * 1.1 ** level); }
-function storageCap(resource, level = state.buildings[`${resource}Storage`]) { return Math.floor(5000 * 1.65 ** level); }
-function energyStats() {
-  const b = state.buildings;
+function storageCap(resource, level = planetBuildings()[`${resource}Storage`]) { return Math.floor(25000 * 1.65 ** level); }
+function energyStats(planet = activePlanet()) {
+  const b = planetBuildings(planet);
   const supply = energySupply(b.solarPlant) * (1 + state.research.energyTech * .05);
   const demand = Math.floor(10 * b.metalMine * 1.1 ** b.metalMine) + Math.floor(10 * b.crystalMine * 1.1 ** b.crystalMine) + Math.floor(20 * b.tritiumSynthesizer * 1.1 ** b.tritiumSynthesizer);
   const efficiency = demand === 0 ? 1 : Math.min(1, supply / demand);
   return { supply, demand, efficiency, net: supply - demand };
 }
-function production() {
-  const b = state.buildings;
-  const efficiency = energyStats().efficiency;
+function production(planet = activePlanet()) {
+  const b = planetBuildings(planet);
+  const efficiency = energyStats(planet).efficiency;
   const plasma = 1 + state.research.plasmaTheory * .03;
   return {
     metal: metalOutput(b.metalMine) * efficiency * plasma,
@@ -409,38 +428,44 @@ function production() {
   };
 }
 function playerScore() {
-  const levels = [...Object.values(state.buildings), ...Object.values(state.research)];
+  const levels = [...state.planets.flatMap((planet) => Object.values(planetBuildings(planet))), ...Object.values(state.research)];
   return Math.floor(levels.reduce((sum, level) => sum + level ** 2 * 12, 0) + Object.values(state.ships).reduce((sum, count) => sum + count * 4, 0));
 }
-function buildTime(cost, targetLevel = 1) {
+function buildTime(cost, targetLevel = 1, planet = activePlanet()) {
   const level = Math.max(1, Number(targetLevel) || 1);
   const resourceSeconds = (cost.metal + cost.crystal + cost.tritium) / 40;
   const progressionSeconds = 45 * 1.45 ** (level - 1);
   const rawSeconds = Math.min(90 * 24 * 60 * 60, Math.max(resourceSeconds, progressionSeconds));
-  const robotics = Math.min(100, state.buildings.roboticsFactory || 0);
+  const robotics = Math.min(100, planetBuildings(planet).roboticsFactory || 0);
   const logistics = Math.min(100, state.research.constructionEngineering || 0);
   const speed = 1 + robotics * .08 + logistics * .12;
   return Math.max(15000, (rawSeconds / speed) * 1000);
 }
-function researchTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + state.buildings.researchLab))) * 1000); }
-function shipTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (105 * (1 + state.buildings.shipyard))) * 1000); }
+function researchTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + planetBuildings().researchLab))) * 1000); }
+function shipTime(ship, planet = activePlanet()) {
+  const cost = ship.cost;
+  const baseTime = ((cost.metal + cost.crystal + cost.tritium) / (105 * (1 + planetBuildings(planet).shipyard))) * 1000;
+  return Math.max(Number(ship.minimumBuildTimeMs) || 5000, baseTime);
+}
 
 function addProduction(hours) {
   if (hours <= 0) return;
   const rate = production();
   for (const resource of Object.keys(RESOURCE_LABELS)) {
-    state.resources[resource] = Math.min(storageCap(resource), state.resources[resource] + rate[resource] * hours);
+    const current = state.resources[resource];
+    state.resources[resource] = Math.max(current, Math.min(storageCap(resource), current + rate[resource] * hours));
   }
 }
 function grantResources(reward) {
   for (const resource of Object.keys(RESOURCE_LABELS)) {
-    state.resources[resource] = Math.min(storageCap(resource), state.resources[resource] + (reward[resource] || 0));
+    const current = state.resources[resource];
+    state.resources[resource] = Math.max(current, Math.min(storageCap(resource), current + (reward[resource] || 0)));
   }
 }
 function nextEventAfter(cursor, now) {
   const times = [now];
-  const activeBuilding = buildingQueue()[0];
-  for (const queue of [activeBuilding, state.queues.research, state.queues.ship]) {
+  const planetaryQueues = state.planets.flatMap((planet) => [buildingQueue(planet)[0], shipQueue(planet)]);
+  for (const queue of [...planetaryQueues, state.queues.research]) {
     if (queue?.completesAt > cursor && queue.completesAt <= now) times.push(queue.completesAt);
   }
   for (const mission of state.missions) {
@@ -449,37 +474,37 @@ function nextEventAfter(cursor, now) {
   }
   return Math.min(...times);
 }
-function activateNextBuilding(at = Date.now()) {
-  const next = buildingQueue()[0];
+function activateNextBuilding(at = Date.now(), planet = activePlanet()) {
+  const next = buildingQueue(planet)[0];
   if (!next || next.startedAt) return;
   next.startedAt = at;
-  next.completesAt = at + buildTime(next.cost || getCost(BUILDINGS[next.key], next.targetLevel), next.targetLevel);
+  next.completesAt = at + buildTime(next.cost || getCost(BUILDINGS[next.key], next.targetLevel), next.targetLevel, planet);
 }
 function resolveQueues(at) {
-  const activeBuilding = buildingQueue()[0];
-  if (activeBuilding?.completesAt <= at) {
-    state.buildings[activeBuilding.key] = activeBuilding.targetLevel;
-    buildingQueue().shift();
-    const planet = activePlanet();
-    if (planet?.homeworld) planet.usedFields = calculatedHomeFields();
-    addLog("system", `${BUILDINGS[activeBuilding.key].name} auf Stufe ${activeBuilding.targetLevel} abgeschlossen.`);
-    activateNextBuilding(at);
-  }
-  for (const kind of ["research", "ship"]) {
-    const queue = state.queues[kind];
-    if (!queue || queue.completesAt > at) continue;
-    if (kind === "research") {
-      state.research[queue.key] = queue.targetLevel;
-      addLog("system", `${RESEARCH[queue.key].name} auf Stufe ${queue.targetLevel} erforscht.`);
-    } else {
+  for (const planet of state.planets) {
+    const activeBuilding = buildingQueue(planet)[0];
+    if (activeBuilding?.completesAt <= at) {
+      planetBuildings(planet)[activeBuilding.key] = activeBuilding.targetLevel;
+      buildingQueue(planet).shift();
+      planet.usedFields = calculatedPlanetFields(planet);
+      addLog("system", `${BUILDINGS[activeBuilding.key].name} auf ${planet.name} Stufe ${activeBuilding.targetLevel} abgeschlossen.`);
+      activateNextBuilding(at, planet);
+    }
+    const queue = shipQueue(planet);
+    if (queue?.completesAt <= at) {
       if (SHIPS[queue.key].isDefense) {
-        const planet = state.planets.find(p=>p.id===queue.planetId) || activePlanet();
         planet.defenses ??= {};
         planet.defenses[queue.key] = (planet.defenses[queue.key] || 0) + queue.amount;
       } else state.ships[queue.key] += queue.amount;
-      addLog("system", `${queue.amount}× ${SHIPS[queue.key].name} aus der Orbitalwerft übernommen.`);
+      addLog("system", `${queue.amount}× ${SHIPS[queue.key].name} aus der Orbitalwerft auf ${planet.name} übernommen.`);
+      planet.shipQueue = null;
     }
-    state.queues[kind] = null;
+  }
+  const research = state.queues.research;
+  if (research?.completesAt <= at) {
+    state.research[research.key] = research.targetLevel;
+    addLog("system", `${RESEARCH[research.key].name} auf Stufe ${research.targetLevel} erforscht.`);
+    state.queues.research = null;
   }
 }
 function resolveMissions(at) {
@@ -524,7 +549,7 @@ function synchronize() {
   let cursor = Math.min(Number(state.resources.lastUpdate) || now, now);
   let changed = false;
   let guard = 0;
-  activateNextBuilding(cursor);
+  for (const planet of state.planets) activateNextBuilding(cursor, planet);
   while (cursor < now && guard < 80) {
     const next = nextEventAfter(cursor, now);
     if (next > cursor) { addProduction((next - cursor) / 3_600_000); cursor = next; changed = true; }
@@ -543,6 +568,8 @@ async function save({ quiet = false } = {}) {
   if (status) status.textContent = "speichert …";
   try {
     synchronize();
+    const homeworld = state.planets.find((planet) => planet.homeworld) || state.planets[0];
+    state.buildings = { ...(homeworld?.buildings || {}) };
     const response = await fetch("/api/state", {
       method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ state }),
     });
@@ -669,6 +696,7 @@ function setGateMode(mode) {
 }
 function openGame(payload) {
   state = payload.state;
+  canGrantTestResources = Boolean(payload.capabilities?.testGrant);
   ensureStateShape();
   synchronize();
   $("#commander-name").textContent = state.commander;
@@ -728,7 +756,7 @@ function queueRows(buildingsOnly = false) {
   const now = Date.now();
   const queued = [
     ...buildingQueueSchedule(now).map(({ queue, index, start, end, duration }) => ({ kind: "building", queue, index, start, end, duration })),
-    ...(buildingsOnly ? [] : ["research", "ship"].filter((kind) => state.queues[kind]).map((kind) => ({ kind, queue: state.queues[kind], index: 0 }))),
+    ...(buildingsOnly ? [] : [state.queues.research ? { kind: "research", queue: state.queues.research, index: 0 } : null, shipQueue() ? { kind: "ship", queue: shipQueue(), index: 0 } : null].filter(Boolean)),
   ];
   if (!queued.length) return `<div class="empty-state"><strong>Keine aktiven Aufträge</strong>Ressourcen werden weiter erzeugt, während du planst.</div>`;
   return `<div class="queue-stack">${queued.map(({ kind, queue, index, start, end, duration }) => {
@@ -755,11 +783,11 @@ function overviewView() {
   const energy = energyStats();
   const rate = production();
   const planet = activePlanet();
-  const activeOrders = buildingQueue().length + (state.queues.research ? 1 : 0) + (state.queues.ship ? 1 : 0);
+  const activeOrders = buildingQueue().length + (state.queues.research ? 1 : 0) + (shipQueue() ? 1 : 0);
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1><p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Dein nächster Meilenstein ist die automatisierte Industrie.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
     <div class="grid overview-grid">
-      <section class="panel hero-panel">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} ist ${planetSizeLabel(planet.fields).toLowerCase()}.</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(state.buildings).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length}</strong></div></div></section>
+      <section class="panel hero-panel">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} ist ${planetSizeLabel(planet.fields).toLowerCase()}.</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
       <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section>
@@ -771,17 +799,17 @@ function overviewView() {
 }
 function upgradePathMarkup() {
   const steps = [
-    { label: "Roboterfabrik", target: "Stufe 2", done: state.buildings.roboticsFactory >= 2 },
-    { label: "Forschungslabor", target: "Stufe 1", done: state.buildings.researchLab >= 1 },
+    { label: "Roboterfabrik", target: "Stufe 2", done: planetBuildings().roboticsFactory >= 2 },
+    { label: "Forschungslabor", target: "Stufe 1", done: planetBuildings().researchLab >= 1 },
     { label: "Energietechnik", target: "Stufe 1", done: state.research.energyTech >= 1 },
     { label: "Verbrennungsantrieb", target: "Stufe 1", done: state.research.combustionDrive >= 1 },
-    { label: "Orbitalwerft", target: "Stufe 2", done: state.buildings.shipyard >= 2 },
+    { label: "Orbitalwerft", target: "Stufe 2", done: planetBuildings().shipyard >= 2 },
     { label: "Frachtdrohne", target: "1 Einheit", done: state.ships.cargoDrone >= 1 },
   ];
   return `<ol class="upgrade-path">${steps.map((step) => `<li class="${step.done ? "done" : ""}"><span>${step.done ? "✓" : "○"}</span><strong>${step.label}</strong><small>${step.target}</small></li>`).join("")}</ol>`;
 }
 function planetRegistryMarkup() {
-  return `<div class="planet-registry">${state.planets.map((planet) => { const usage = fieldUsage(planet); const active = planet.id === activePlanet().id; return `<button type="button" class="planet-mini-card ${active ? "active" : ""}" data-planet-id="${escapeHtml(planet.id)}" aria-pressed="${active}">${planetArtMarkup(planet, "planet-mini-art")}<div><span class="badge">${escapeHtml(planet.classification)}</span><h3>${escapeHtml(planet.name)}</h3><p>${escapeHtml(planet.coordinates)}</p><strong>${formatNumber(usage)} / ${formatNumber(planet.fields)} Baufelder</strong><small>${active ? "Aktive Welt" : "Welt auswählen"}</small></div></button>`; }).join("")}</div>`;
+  return `<div class="planet-registry">${state.planets.map((planet) => { const usage = fieldUsage(planet); const active = planet.id === activePlanet().id; return `<article class="planet-mini-card ${active ? "active" : ""}">${planetArtMarkup(planet, "planet-mini-art")}<div><span class="badge">${escapeHtml(planet.classification)}</span><h3>${escapeHtml(planet.name)}</h3><p>${escapeHtml(planet.coordinates)}</p><strong>${formatNumber(usage)} / ${formatNumber(planet.fields)} Baufelder</strong><div class="planet-card-actions"><button type="button" class="secondary-button" data-planet-id="${escapeHtml(planet.id)}">${active ? "Aktive Welt" : "Auswählen"}</button><button type="button" class="secondary-button" data-rename-planet="${escapeHtml(planet.id)}">Umbenennen</button></div></div></article>`; }).join("")}</div>`;
 }
 function rankingMarkup() {
   if (!leaderboard.length) return `<div class="empty-state">Noch keine weiteren Signaturen im Sektor.</div>`;
@@ -790,8 +818,8 @@ function rankingMarkup() {
 function strategyTip() {
   const e = energyStats();
   if (e.net < 0) return "Deine Minen arbeiten wegen des Energieengpasses gedrosselt. Ein Solarkraftwerk bringt die Produktion wieder auf 100 %.";
-  if (state.buildings.roboticsFactory < 2) return "Eine Roboterfabrik auf Stufe 2 öffnet den Weg zu Forschungslabor und Orbitalwerft.";
-  if (state.buildings.researchLab < 1) return "Eröffne ein Forschungslabor und entwickle Energietechnik für effizientere Solarkraftwerke.";
+  if (planetBuildings().roboticsFactory < 2) return "Eine Roboterfabrik auf Stufe 2 öffnet den Weg zu Forschungslabor und Orbitalwerft.";
+  if (planetBuildings().researchLab < 1) return "Eröffne ein Forschungslabor und entwickle Energietechnik für effizientere Solarkraftwerke.";
   if (state.research.combustionDrive < 1) return "Erforsche den Verbrennungsantrieb. Damit schaltest du die erste Frachtdrohne frei.";
   if (state.ships.cargoDrone < 1) return "Baue eine Frachtdrohne und schicke sie zur verlassenen Raffinerie im Nachbarorbit.";
   return "Deine Kernsysteme sind einsatzbereit. Bergungseinsätze finanzieren die nächste Ausbaustufe.";
@@ -799,7 +827,7 @@ function strategyTip() {
 
 function entityCard(kind, key, config, level, cost, requirements, queueKind) {
   const isBuilding = queueKind === "building";
-  const queue = isBuilding ? buildingQueue() : state.queues[queueKind];
+  const queue = isBuilding ? buildingQueue() : queueKind === "ship" ? shipQueue() : state.queues[queueKind];
   const isCurrent = isBuilding ? queue.some((item) => item.key === key) : queue?.key === key;
   const target = isBuilding ? projectedBuildingLevel(key) + 1 : level + 1;
   const atCap = target > LEVEL_CAP;
@@ -815,7 +843,7 @@ function entityCard(kind, key, config, level, cost, requirements, queueKind) {
     : `<button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-${kind}="${key}" ${disabled ? "disabled" : ""}>${action}</button>`;
   const levelDisplay = atCap ? `<strong>${LEVEL_CAP}</strong> · MAX` : `<strong>${level}</strong> → <strong>${target}</strong>`;
   const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Erster Abschluss in ${formatDuration(isBuilding ? buildTime(cost, target) : researchTime(cost))}</span>`;
-  return `<article class="entity-card entity-card--${kind} entity-card--${key} ${locked || noFields ? "locked" : ""}" style="--level-progress:${Math.min(100, level)}%">${entityArtMarkup(config)}<div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><div class="level-meter" aria-label="Stufe ${level} von 100"><i></i></div><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>Felder beim Erstbau: ${config.fieldCost}</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
+  return `<article class="entity-card entity-card--${kind} entity-card--${key} ${locked || noFields ? "locked" : ""}" style="--level-progress:${Math.min(100, level)}%">${entityArtMarkup(config)}<div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><div class="level-meter" aria-label="Stufe ${level} von 100"><i></i></div><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>1 Baufeld je Stufe</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
 }
 function energyUseFor(key, level) {
   if (key === "metalMine" || key === "crystalMine") return Math.floor(10 * level * 1.1 ** level);
@@ -824,31 +852,33 @@ function energyUseFor(key, level) {
 }
 function buildingsView() {
   const economy = Object.entries(BUILDINGS).filter(([, item]) => item.group === "Ökonomie");
-  const infrastructure = Object.entries(BUILDINGS).filter(([, item]) => item.group === "Infrastruktur");
+  const infrastructureOrder = ["metalStorage", "crystalStorage", "tritiumStorage", "roboticsFactory", "researchLab", "shipyard", "commandCenter", "solarPlant"];
+  const infrastructure = infrastructureOrder.map((key) => [key, BUILDINGS[key]]).filter(([, item]) => item?.group === "Infrastruktur");
   const projected = projectedBuildingState();
-  const makeGroup = (title, entries) => `<section class="entity-list"><div class="panel-title"><h2>${title}</h2><span>${title === "Ökonomie" ? "PRODUKTION UND ENERGIE" : "KOLONIALE SYSTEME"}</span></div>${entries.map(([key, config]) => { const level = state.buildings[key]; const cost = getCost(config, projected.buildings[key] + 1); const requirements = config.requires ? config.requires(projected) : []; return entityCard("build", key, config, level, cost, requirements, "building"); }).join("")}</section>`;
+  const makeGroup = (title, entries) => `<section class="entity-list"><div class="panel-title"><h2>${title}</h2><span>${title === "Ökonomie" ? "PRODUKTION" : "KOLONIALE SYSTEME"}</span></div>${entries.map(([key, config]) => { const level = planetBuildings()[key]; const cost = getCost(config, projected.buildings[key] + 1); const requirements = config.requires ? config.requires(projected) : []; return entityCard("build", key, config, level, cost, requirements, "building"); }).join("")}</section>`;
   const schedule = buildingQueueSchedule();
   const queueEnd = schedule.at(-1)?.end;
   return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · BAUTEMPO ${constructionSpeedFactor().toFixed(2)}×${queueEnd ? ` · FERTIG ${formatDateTime(queueEnd)}` : ""}</span></section><section class="panel queue-planning-panel"><div class="panel-inner"><div class="panel-title"><h2>Baureihe</h2><span>${buildingQueue().length ? `${buildingQueue().length} GEPLANT` : "FREI"}</span></div>${queueRows(true)}</div></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
 }
 function researchView() {
-  return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Jedes Laborlevel verkürzt die Laufzeit eines Projekts.</p></div><span class="sector-label">LABOR STUFE ${state.buildings.researchLab}</span></section><section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, level + 1); return entityCard("research", key, config, level, cost, config.requires(state), "research"); }).join("")}</section>`;
+  return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Das Labor der aktiven Welt bestimmt Voraussetzungen und Tempo.</p></div><span class="sector-label">LABOR STUFE ${planetBuildings().researchLab}</span></section><section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, level + 1); return entityCard("research", key, config, level, cost, config.requires(planetState()), "research"); }).join("")}</section>`;
 }
 function shipCard(key, ship) {
-  const queue = state.queues.ship;
-  const locked = ship.requires(state).some((item) => !item.ok);
+  const queue = shipQueue();
+  const locked = ship.requires(planetState()).some((item) => !item.ok);
   const affordable = hasResources(ship.cost);
   const disabled = locked || !affordable || Boolean(queue);
   const action = queue?.key === key ? "Im Bau" : queue ? "Werft belegt" : locked ? "Voraussetzung fehlt" : affordable ? "Einheit bauen" : "Rohstoffe fehlen";
-  const needs = ship.requires(state).filter((item) => !item.ok).map((item) => item.text);
-  return `<article class="entity-card entity-card--ship entity-card--${key} ${locked ? "locked" : ""}">${entityArtMarkup(ship)}<div class="entity-icon">${ship.icon}</div><div class="entity-info"><h2>${ship.name} <span class="badge">verfügbar: ${ship.isDefense ? (activePlanet().defenses?.[key] || 0) : state.ships[key]}</span></h2><p>${ship.description}</p><div class="meta"><span>${ship.stats}</span><span>Werftzeit: ${formatDuration(shipTime(ship.cost))}</span></div>${needs.length ? `<div class="unlock-note">${needs.join(" · ")}</div>` : ""}</div><div class="entity-action"><p class="cost">${costMarkup(ship.cost)}</p><button class="${locked ? "secondary-button" : "primary-button"}" data-ship="${key}" ${disabled ? "disabled" : ""}>${action}</button></div></article>`;
+  const needs = ship.requires(planetState()).filter((item) => !item.ok).map((item) => item.text);
+  return `<article class="entity-card entity-card--ship entity-card--${key} ${locked ? "locked" : ""}">${entityArtMarkup(ship)}<div class="entity-icon">${ship.icon}</div><div class="entity-info"><h2>${ship.name} <span class="badge">verfügbar: ${ship.isDefense ? (activePlanet().defenses?.[key] || 0) : state.ships[key]}</span></h2><p>${ship.description}</p><div class="meta"><span>${ship.stats}</span><span>Werftzeit: ${formatDuration(shipTime(ship))}</span></div>${needs.length ? `<div class="unlock-note">${needs.join(" · ")}</div>` : ""}</div><div class="entity-action"><p class="cost">${costMarkup(ship.cost)}</p><button class="${locked ? "secondary-button" : "primary-button"}" data-ship="${key}" ${disabled ? "disabled" : ""}>${action}</button></div></article>`;
 }
 function defenseView() {
   return `<section class="view-heading"><h1>Planetare Verteidigung · ${escapeHtml(activePlanet().name)}</h1><p>Stationäre Anlagen bleiben auf dieser Welt. Sie verstärken die Abwehr bei Angriffen; Störsender und Raketenabwehr erhöhen das Sonden-Abfangrisiko.</p></section><section class="entity-list">${Object.entries(SHIPS).filter(([,s])=>s.isDefense).map(([key,s])=>shipCard(key,s)).join("")}</section>`;
 }
 function shipyardView() {
   const deployed = state.missions.reduce((total, mission) => total + Object.values(mission.fleet).reduce((sum, count) => sum + count, 0), 0);
-  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Die Werft fertigt eine Einheit nach der anderen. Ausgesandte Schiffe stehen erst nach ihrem Rückflug wieder zur Verfügung.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section><section class="entity-list">${Object.entries(SHIPS).filter(([,ship])=>!ship.isDefense).map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
+  const ships = SHIPYARD_ORDER.map((key) => [key, SHIPS[key]]).filter(([, ship]) => ship && !ship.isDefense);
+  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Spezialschiffe, Frachter und Kampfschiffe sind nach Baugruppe geordnet. Jede planetare Werft arbeitet mit eigener Warteschlange.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section><section class="entity-list">${ships.map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
 }
 function missionStatusMarkup() {
   if (!state.missions.length) return `<div class="empty-state"><strong>Keine Flotten unterwegs</strong>Baue eine Frachtdrohne und beginne deine erste Bergung.</div>`;
@@ -872,6 +902,7 @@ function reportSection(title, values, catalog) {
   return `<section class="intel-section"><h3>${title}</h3><div class="intel-values">${Object.entries(values).map(([key, value]) => `<div><span>${escapeHtml(catalog[key]?.name || catalog[key] || key)}</span><strong>${formatNumber(value)}</strong></div>`).join("")}</div></section>`;
 }
 async function colonizeTarget(targetId) {
+  if (state.planets.length >= 8) { toast("Du hast das Maximum von 8 Planeten erreicht.", true); return; }
   if (actionBusy || isSaving) { toast("Speicherung läuft – bitte gleich erneut versuchen."); return; }
   actionBusy = true;
   try {
@@ -899,7 +930,7 @@ function economyView() {
   return tablePanel("Wirtschaft", ["Rohstoff", "Vorrat", "Produktion / Stunde", "Lagerkapazität"], Object.keys(RESOURCE_LABELS).map(key => `<tr><td>${RESOURCE_LABELS[key]}</td><td>${formatNumber(state.resources[key])}</td><td>+${formatNumber(rates[key])}</td><td>${formatNumber(storageCap(key))}</td></tr>`)) + `<p class="view-note">Energieeffizienz: ${Math.round(energyStats().efficiency * 100)} %. Wirtschaft und Schiffe werden derzeit zwischen deinen Planeten geteilt; Verteidigungsanlagen sind planetengebunden.</p>`;
 }
 function statisticsView() {
-  const categories = [["Gebäude", Object.values(state.buildings).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
+  const categories = [["Gebäude", state.planets.flatMap((planet) => Object.values(planetBuildings(planet))).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
   return tablePanel("Spielerstatistik", ["Bereich", "Punkte"], categories.map(([name,value]) => `<tr><td>${name}</td><td>${formatNumber(value)}</td></tr>`));
 }
 function fleetsView() {
@@ -929,7 +960,7 @@ function galaxyInspector() {
     : `<button class="orbit-slot ${slot.free ? "free" : "occupied"} ${slot.targetId === selectedOrbitTargetId ? "selected" : ""}" data-orbit-target="${escapeHtml(slot.targetId)}"><strong>${slot.position}</strong><span>${escapeHtml(slot.name)}</span><small>${slot.free ? "Frei · unbekannte Größe" : `Spieler · ${escapeHtml(slot.owner || "Unbekannt")}`}</small></button>`).join("")}</div>`;
   const summary = `<span class="eyebrow">${galaxyCoordinates(system.position)} · ${system.distance} SEKTOREN</span><h2>${escapeHtml(system.signature)}</h2><p>${system.planetCount} sichtbare Welten · ${system.occupiedCount} bewohnt · ${system.freeCount} frei</p>${slotList}`;
   if (!target) return `<aside class="galaxy-inspector">${summary}<div class="intel-locked">Wähle eine belegte Position für Spionage oder Angriff – oder eine freie Welt zur Kolonisierung.</div></aside>`;
-  if (target.free) return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · FREIE WELT</span><h3>${escapeHtml(target.name)}</h3><p>Größe und Beschaffenheit werden erst bei der Besiedlung bekannt. Ein Kolonieschiff wird verbraucht.</p><button class="primary-button" data-colonize="${escapeHtml(target.targetId)}" ${!state.ships.colonyShip || actionBusy ? "disabled" : ""}>${state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button></section></aside>`;
+  if (target.free) { const atLimit = state.planets.length >= 8; return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · FREIE WELT</span><h3>${escapeHtml(target.name)}</h3><p>Größe und Beschaffenheit werden erst bei der Besiedlung bekannt. Ein Kolonieschiff wird verbraucht.</p><button class="primary-button" data-colonize="${escapeHtml(target.targetId)}" ${!state.ships.colonyShip || actionBusy || atLimit ? "disabled" : ""}>${atLimit ? "Planetenlimit 8 erreicht" : state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button></section></aside>`; }
   const report = currentReport(target.targetId);
   const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
   return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · BESIEDELT</span><h3>${escapeHtml(target.name)}</h3><p>Kolonie von <strong>${escapeHtml(target.owner || "Unbekannt")}</strong>. Für Wirtschaft, Flotte und Verteidigung ist weiterhin ein Sondenscan nötig.</p>
@@ -993,7 +1024,35 @@ function messagesView() {
   return `<section class="view-heading"><div><span class="eyebrow">KOMMANDOKANAL</span><h1>Nachrichten & Berichte</h1><p>Direktnachrichten, Aufklärung und Kampfergebnisse bleiben hier als Archiv erhalten.</p></div><span class="sector-label">${unread} UNGELESEN · ${messages.length} NACHRICHTEN</span></section><div class="grid two-column"><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Neue Nachricht</h2><span>DIREKTKANAL</span></div><form id="message-compose" class="message-compose"><label>Empfänger<input name="recipient" required maxlength="20" value="${escapeHtml(messageRecipient)}" placeholder="Kommandantenname"></label><label>Betreff<input name="subject" required maxlength="72" value="${escapeHtml(messageSubject)}" placeholder="z. B. Handelsangebot"></label><label>Nachricht<textarea name="body" required maxlength="1200" rows="5" placeholder="Deine Nachricht an einen anderen Kommandanten"></textarea></label><button class="primary-button" type="submit">Nachricht senden</button></form></div></section><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Systemalarme</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section></div><section class="archive-section"><div class="panel-title"><h2>Postfach</h2><span>${messages.length} EINTRÄGE</span></div><div class="mail-grid">${messages.map(mailboxMessageMarkup).join("") || `<div class="empty-state"><strong>Postfach leer</strong>Suche einen Spieler und eröffne einen direkten Kanal.</div>`}</div></section><section class="archive-section"><div class="panel-title"><h2>Spionageberichte</h2><span>${spyReports.length} ARCHIVIERT</span></div><div class="mail-grid">${spyReports.map(spyArchiveMarkup).join("") || `<div class="empty-state"><strong>Keine Aufklärung verfügbar</strong>Wähle in der Galaxie einen gegnerischen Planeten und entsende Sonden.</div>`}</div></section><section class="archive-section"><div class="panel-title"><h2>Kampfberichte</h2><span>${combatReports.length} ARCHIVIERT</span></div><div class="mail-grid">${combatReports.map(combatArchiveMarkup).join("") || `<div class="empty-state"><strong>Keine Kampfberichte</strong>Angriffe und Abwehraktionen werden nach dem Gefecht hier gespeichert.</div>`}</div></section>`;
 }
 function playersView() {
-  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDANTENNETZ</span><h1>Spielersuche</h1><p>Finde einen Kommandanten und eröffne einen privaten Direktkanal. Der Empfänger erhält eine Meldung im eigenen Postfach.</p></div><span class="sector-label">${playerSearchResults.length} TREFFER</span></section><section class="panel"><div class="panel-inner"><form id="player-search-form" class="player-search" novalidate><input name="query" maxlength="20" placeholder="Kommandantenname suchen"><button class="primary-button" type="button" data-player-search>Spieler suchen</button></form></div></section><section class="archive-section"><div class="panel-title"><h2>Gefundene Kommandanten</h2><span>ONLINE-DATENBANK</span></div><div class="mail-grid">${playerSearchResults.map((player) => `<article class="mail-card"><span class="badge">KOMMANDANT</span><h3>${escapeHtml(player.username)}</h3><p>${formatNumber(player.score)} Punkte · ${player.planets} Planet${player.planets === 1 ? "" : "en"}</p><button class="primary-button" data-message-player="${escapeHtml(player.username)}">Nachricht schreiben</button></article>`).join("") || `<div class="empty-state"><strong>Suche starten</strong>Gib mindestens drei Zeichen des Kommandantennamens ein.</div>`}</div></section>`;
+  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDANTENNETZ</span><h1>Spielersuche</h1><p>Finde einen Kommandanten und eröffne einen privaten Direktkanal. Der Empfänger erhält eine Meldung im eigenen Postfach.</p></div><span class="sector-label">${playerSearchResults.length} TREFFER</span></section><section class="panel"><div class="panel-inner"><form id="player-search-form" class="player-search" novalidate><input name="query" maxlength="20" placeholder="Kommandantenname suchen"><button class="primary-button" type="button" data-player-search>Spieler suchen</button></form></div></section><section class="archive-section"><div class="panel-title"><h2>Gefundene Kommandanten</h2><span>ONLINE-DATENBANK</span></div><div class="mail-grid">${playerSearchResults.map((player) => `<article class="mail-card"><span class="badge">KOMMANDANT</span><h3>${escapeHtml(player.username)}</h3><p>${formatNumber(player.score)} Punkte · ${player.planets} Planet${player.planets === 1 ? "" : "en"}</p><div class="player-actions"><button class="primary-button" data-message-player="${escapeHtml(player.username)}">Nachricht schreiben</button>${canGrantTestResources ? `<button class="secondary-button" data-test-grant="${escapeHtml(player.username)}">50.000 je Ressource senden</button>` : ""}</div></article>`).join("") || `<div class="empty-state"><strong>Suche starten</strong>Gib mindestens drei Zeichen des Kommandantennamens ein.</div>`}</div></section>`;
+}
+async function grantTestResources(username) {
+  if (!canGrantTestResources || actionBusy) return;
+  actionBusy = true;
+  try {
+    const response = await fetch("/api/test/grant-resources", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ username }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Testlieferung fehlgeschlagen.");
+    toast(`50.000 Metall, Kristall und Tritium an ${payload.username} gesendet.`);
+  } catch (error) { toast(error.message || "Testlieferung fehlgeschlagen.", true);
+  } finally { actionBusy = false; render(); }
+}
+async function renamePlanet(planetId) {
+  const planet = state.planets.find((entry) => entry.id === planetId);
+  if (!planet || actionBusy || isSaving) return;
+  const name = window.prompt("Neuer Planetenname (3–28 Zeichen)", planet.name)?.trim();
+  if (!name || name === planet.name) return;
+  actionBusy = true;
+  try {
+    if (!await save({ quiet: true })) return;
+    const response = await fetch("/api/planets/rename", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ planetId, name }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Umbenennen fehlgeschlagen.");
+    state = payload.state;
+    ensureStateShape();
+    toast(`Planet heißt jetzt ${state.planets.find((entry) => entry.id === planetId)?.name || name}.`);
+  } catch (error) { toast(error.message || "Umbenennen fehlgeschlagen.", true);
+  } finally { actionBusy = false; render(); }
 }
 function logView() {
   return `<section class="view-heading"><div><span class="eyebrow">EREIGNISSPEICHER</span><h1>Flugdaten und Industrieprotokoll.</h1><p>Die jüngsten achtzig Ereignisse bleiben im serverseitigen Spielstand erhalten.</p></div><span class="sector-label">${state.log.length} EINTRÄGE</span></section><section class="log-list">${state.log.map((entry) => `<article class="log-row ${escapeHtml(entry.type)}"><time>${new Date(entry.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>${escapeHtml(entry.text)}</span></article>`).join("")}</section>`;
@@ -1036,6 +1095,8 @@ function render() {
   const planetSwitch = $("#planet-switch");
   if (document.activeElement !== planetSwitch) planetSwitch.innerHTML = state.planets.map(planet => `<option value="${escapeHtml(planet.id)}" ${planet.id === activePlanet().id ? "selected" : ""}>${escapeHtml(planet.name)}</option>`).join("");
   $(".planet-card strong").textContent = activePlanet().name;
+  $(".planet-card .eyebrow").textContent = activePlanet().homeworld ? "HEIMATWELT" : "KOLONIE";
+  $(".planet-card span:not(.eyebrow)").textContent = activePlanet().coordinates;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
   const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   content.innerHTML = views[activeView]();
@@ -1053,7 +1114,7 @@ function startBuilding(key, amount = 1) {
     const cost = getCost(config, targetLevel);
     if (requirements.some((item) => !item.ok) || !hasResources(cost) || !hasFreeFields(config, key)) break;
     pay(cost);
-    state.queues.building.push({ key, targetLevel, cost, fieldCost: targetLevel === 1 ? config.fieldCost : 0, queuedAt: Date.now() });
+    buildingQueue().push({ key, targetLevel, cost, fieldCost: 1, queuedAt: Date.now() });
     added += 1;
   }
   if (!added) return;
@@ -1083,7 +1144,7 @@ function startResearch(key) {
   const config = RESEARCH[key];
   const level = state.research[key];
   if (level >= LEVEL_CAP) return;
-  const requirements = config.requires(state);
+  const requirements = config.requires(planetState());
   const cost = getCost(config, level + 1);
   if (state.queues.research || requirements.some((item) => !item.ok) || !hasResources(cost)) return;
   pay(cost);
@@ -1097,10 +1158,10 @@ function startResearch(key) {
 function startShip(key) {
   synchronize();
   const ship = SHIPS[key];
-  if (state.queues.ship || ship.requires(state).some((item) => !item.ok) || !hasResources(ship.cost)) return;
+  if (shipQueue() || ship.requires(planetState()).some((item) => !item.ok) || !hasResources(ship.cost)) return;
   pay(ship.cost);
   const startedAt = Date.now();
-  state.queues.ship = { key, amount: 1, planetId: activePlanet().id, startedAt, completesAt: startedAt + shipTime(ship.cost) };
+  activePlanet().shipQueue = { key, amount: 1, planetId: activePlanet().id, startedAt, completesAt: startedAt + shipTime(ship) };
   addLog("system", `${ship.name} in der Orbitalwerft in Auftrag gegeben.`);
   toast(`${ship.name} wird montiert.`);
   render();
@@ -1198,6 +1259,8 @@ content.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (button.dataset.testGrant) { grantTestResources(button.dataset.testGrant); return; }
+  if (button.dataset.renamePlanet) { renamePlanet(button.dataset.renamePlanet); return; }
   if (button.dataset.replyTo) {
     messageRecipient = button.dataset.replyTo;
     messageSubject = `Re: ${button.dataset.replySubject || "Nachricht"}`.slice(0, 72);
