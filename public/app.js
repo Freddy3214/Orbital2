@@ -734,7 +734,8 @@ function queueRows(buildingsOnly = false) {
     const label = kind === "building" ? `Stufe ${queue.targetLevel}` : kind === "research" ? `Stufe ${queue.targetLevel}` : `${queue.amount} Einheit`;
     const effectiveEnd = kind === "building" ? end : queue.completesAt;
     const timing = waiting ? `Start ${formatDateTime(start)} · Ende ${formatDateTime(end)}` : `${formatDuration(effectiveEnd - now)} · Ende ${formatDateTime(effectiveEnd)}`;
-    return `<div class="queue-row ${waiting ? "waiting" : ""}"><div class="queue-top"><strong>${escapeHtml(config.name)} <span>· ${label}${waiting ? ` · Position ${index + 1}` : ""}</span></strong><span>${timing}</span></div><div class="progress"><i style="width:${percent}%"></i></div></div>`;
+    const cancel = kind === "building" ? `<button class="queue-cancel" data-cancel-building="${index}">${waiting ? "Auftrag entfernen" : "Bau abbrechen"} · 100 % zurück</button>` : "";
+    return `<div class="queue-row ${waiting ? "waiting" : ""}"><div class="queue-top"><strong>${escapeHtml(config.name)} <span>· ${label}${waiting ? ` · Position ${index + 1}` : ""}</span></strong><span>${timing}</span></div><div class="progress"><i style="width:${percent}%"></i></div>${cancel}</div>`;
   }).join("")}</div>`;
 }
 
@@ -1058,6 +1059,20 @@ function startBuilding(key, amount = 1) {
   render();
   save({ quiet: true });
 }
+function cancelBuilding(index) {
+  synchronize();
+  const queue = buildingQueue();
+  const item = queue[index];
+  if (!item) return;
+  const config = BUILDINGS[item.key];
+  for (const resource of Object.keys(RESOURCE_LABELS)) state.resources[resource] = Math.max(0, state.resources[resource] + Number(item.cost?.[resource] || 0));
+  queue.splice(index, 1);
+  if (index === 0) activateNextBuilding(Date.now());
+  addLog("system", `${config.name} auf Stufe ${item.targetLevel} abgebrochen. Volle Kosten erstattet.`);
+  toast(`${config.name} abgebrochen · volle Kosten zurückerstattet.`);
+  render();
+  save({ quiet: true });
+}
 function startResearch(key) {
   synchronize();
   const config = RESEARCH[key];
@@ -1182,6 +1197,10 @@ content.addEventListener("click", (event) => {
     messageRecipient = button.dataset.replyTo;
     messageSubject = `Re: ${button.dataset.replySubject || "Nachricht"}`.slice(0, 72);
     render();
+    return;
+  }
+  if (button.dataset.cancelBuilding !== undefined) {
+    cancelBuilding(Number(button.dataset.cancelBuilding));
     return;
   }
   if (button.dataset.signalId) {
