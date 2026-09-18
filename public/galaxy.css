@@ -1,0 +1,56 @@
+.galaxy-toolbar { display:flex; flex-wrap:wrap; justify-content:space-between; gap:12px; margin-bottom:14px; }
+.galaxy-toolbar > div { display:flex; align-items:center; gap:7px; }
+.galaxy-toolbar span { min-width:35px; text-align:center; color:#b8c4da; font-size:12px; }
+.galaxy-layout { display:grid; grid-template-columns:minmax(0,1fr) 310px; gap:16px; align-items:start; }
+.universe-map { position:relative; aspect-ratio:1; overflow:hidden; isolation:isolate; border:1px solid #253046; border-radius:18px; background:#010207; box-shadow:inset 0 0 100px #000,0 24px 60px #0005; }
+.universe-map::before { content:""; position:absolute; inset:0; pointer-events:none; opacity:.14; background-image:radial-gradient(circle,#fff 0 .5px,transparent .8px),radial-gradient(circle,#b5c9f4 0 .6px,transparent 1px); background-size:79px 91px,137px 117px; background-position:11px 23px,57px 42px; }
+.sensor-circle { position:absolute; aspect-ratio:1; transform:translate(-50%,-50%); border:1px solid #6891c94a; border-radius:50%; background:radial-gradient(circle,#17304d12 0 65%,#32759c19 100%); box-shadow:0 0 24px #427dae15,inset 0 0 25px #427dae10; pointer-events:none; }
+.signal-point { position:absolute; z-index:2; transform:translate(-50%,-50%); width:26px; height:26px; padding:0; border:0; background:transparent; color:white; }
+.signal-point i { display:block; width:5px; height:5px; margin:auto; background:white; border-radius:50%; box-shadow:0 0 7px #fff,0 0 16px #c4d8ff80; }
+.signal-point span { position:absolute; top:25px; left:50%; transform:translateX(-50%); width:max-content; max-width:105px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; color:#e2e7f0; text-shadow:0 2px 3px #000; }
+.signal-point:hover, .signal-point:focus-visible, .signal-point.selected { outline:1px solid #bcb3ff; border-radius:50%; background:#aea0ff15; }
+.signal-point.selected span { color:#d4bfff; }
+.home-signal { position:absolute; transform:translate(-50%,-50%); color:#67e7da; font-size:10px; text-align:center; pointer-events:none; }
+.home-signal i { display:block; width:9px; height:9px; margin:0 auto 7px; border:1px solid #94fff4; border-radius:50%; box-shadow:0 0 14px #65e5d5; }
+.map-caption { position:absolute; bottom:14px; left:16px; right:16px; color:#879bb5; font:10px Consolas,monospace; letter-spacing:.1em; pointer-events:none; }
+.map-caption small { display:block; margin-top:6px; color:#61728a; letter-spacing:0; }
+.galaxy-inspector { padding:23px; border:1px solid #394059; border-radius:18px; background:linear-gradient(145deg,#222039,#101725 60%); max-height:760px; overflow:auto; }
+.galaxy-inspector h2 { font-size:23px; margin:12px 0; overflow-wrap:anywhere; }
+.galaxy-inspector p { color:#b2bbce; font-size:12px; line-height:1.65; }
+.scanner-symbol { font-size:80px; line-height:1.5; color:#b6a5ff; text-shadow:0 0 45px #9c70ff50; }
+.sensor-stat,.report-heading { display:flex; justify-content:space-between; align-items:center; padding:15px 0; border-bottom:1px solid #ffffff15; color:#bfb1ff; font-size:11px; }
+.sensor-stat strong,.report-heading strong { font-size:24px; }
+.intel-actions { display:grid; gap:8px; margin:18px 0; }
+.raid-action { border-color:#f67b9350; color:#ffafbe; }
+.intel-locked { padding:14px 0; border-top:1px solid #ffffff0e; color:#8c9bb2; font-size:12px; line-height:1.6; }
+.intel-section h3 { margin:18px 0 10px; color:#b2cdff; font-size:12px; }
+.intel-values { display:grid; gap:7px; }
+.intel-values > div { display:flex; justify-content:space-between; gap:10px; font-size:11px; padding:6px 0; border-bottom:1px solid #ffffff08; color:#aebed0; }
+.intel-values strong { color:#e8f1ff; overflow-wrap:anywhere; }
+.galaxy-flight-panel { margin-top:16px; }
+.two-column { align-items:start; }
+.entity-list { align-content:start; }
+.entity-card { --accent:#7ce7d4; --accent-rgb:124,231,212; overflow:hidden; border-color:rgba(var(--accent-rgb),.28); background:linear-gradient(115deg,rgba(var(--accent-rgb),.17),transparent 62%),#101a29; box-shadow:0 8px 24px #0002; }
+.entity-card::before { content:""; position:absolute; inset:0 auto 0 0; width:4px; background:var(--accent); opacity:.8; }
+.entity-art { height:120px; border-color:rgba(var(--accent-rgb),.4); box-shadow:0 0 28px rgba(var(--accent-rgb),.12); }
+.entity-icon { color:var(--accent); border-color:rgba(var(--accent-rgb),.5); }
+.entity-card .level strong { color:var(--accent); }
+.entity-card.locked { opacity:1; }
+.entity-card.locked .entity-art { filter:saturate(.4); }
+.entity-card--metalMine,.entity-card--metalStorage { --accent:#9dc8ff; --accent-rgb:157,200,255; }
+.entity-card--crystalMine,.entity-card--crystalStorage { --accent:#df95ff; --accent-rgb:223,149,255; }
+.entity-card--solarPlant,.entity-card--roboticsFactory,.entity-card--energyTech { --accent:#ffe27d; --accent-rgb:255,226,125; }
+.entity-card--tritiumSynthesizer,.entity-card--tritiumStorage { --accent:#89f4ab; --accent-rgb:137,244,171; }
+.entity-card--researchLab,.entity-card--deepSpaceSensors,.entity-card--spyProbe { --accent:#ae9dff; --accent-rgb:174,157,255; }
+.entity-card--shipyard,.entity-card--combustionDrive { --accent:#ffaf78; --accent-rgb:255,175,120; }
+.entity-card--interceptor,.entity-card--plasmaTheory { --accent:#ff8bac; --accent-rgb:255,139,172; }
+.entity-card--avionics,.entity-card--colonyShip { --accent:#8ec7ff; --accent-rgb:142,199,255; }
+.level-meter { height:4px; margin:9px 0; border-radius:10px; overflow:hidden; background:#ffffff13; }
+.level-meter i { display:block; width:var(--level-progress); height:100%; background:var(--accent); }
+.cost-token { display:inline-block; margin:3px 5px 3px 0; padding:3px 6px; background:#060d1880; border-radius:5px; overflow-wrap:anywhere; }
+.cost-token--metal b { color:#9dc8ff; }.cost-token--crystal b { color:#df95ff; }.cost-token--tritium b { color:#89f4ab; }
+.entity-action { grid-template-columns:minmax(0,1fr); gap:8px; }
+.entity-action .build-actions,.entity-action > button { grid-column:1; grid-row:auto; }
+.build-actions { display:flex; flex-wrap:wrap; }.build-actions button { flex:1; }
+@media (max-width:1100px) { .galaxy-layout { grid-template-columns:1fr; }.galaxy-inspector { max-height:none; }.universe-map { min-height:0; }.entity-card { grid-template-columns:90px minmax(0,1fr); }.entity-art { width:90px; height:100px; }.entity-icon { left:70px; } }
+@media (max-width:600px) { .galaxy-toolbar > div { flex-wrap:wrap; }.entity-card { grid-template-columns:42px minmax(0,1fr); }.entity-art { width:100%; height:150px; }.entity-action { grid-column:1 / -1; }.entity-card .entity-action > button { grid-column:1; grid-row:auto; }.galaxy-inspector { padding:18px; }.signal-point span { font-size:9px; max-width:70px; } }
