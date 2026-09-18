@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Blauer Bergkristall">
+  <defs><linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e9ffff"/><stop offset=".28" stop-color="#8df1ff"/><stop offset=".65" stop-color="#298bff"/><stop offset="1" stop-color="#174782"/></linearGradient><filter id="g"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+  <g fill="url(#blue)" stroke="#b9fbff" stroke-width="1.25" stroke-linejoin="round" filter="url(#g)"><path d="m30 7 12 18-7 30H20l-7-24z"/><path d="m15 23 12 11-4 22H9L5 36z"/><path d="m44 20 13 18-5 18H37l-4-21z"/></g>
+  <path d="m30 7-2 45 14-27zM15 23l8 33 4-22zM44 20l-3 31 16-13z" fill="#fff" opacity=".28"/>
+</svg>

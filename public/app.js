@@ -4,7 +4,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const content = $("#content");
 
 const RESOURCE_LABELS = { metal: "Metall", crystal: "Kristall", tritium: "Tritium" };
-const RESOURCE_SYMBOLS = { metal: "Fe", crystal: "Cr", tritium: "Tr" };
+const RESOURCE_ICONS = { metal: "/assets/resource-metal.svg", crystal: "/assets/resource-crystal.svg", tritium: "/assets/resource-tritium.svg" };
 const LEVEL_CAP = 100;
 
 const BUILDINGS = {
@@ -269,8 +269,12 @@ function getCost(config, targetLevel) {
   return cost;
 }
 function hasResources(cost) { return Object.keys(RESOURCE_LABELS).every((key) => (state.resources[key] || 0) + .001 >= (cost[key] || 0)); }
+function resourceIconMarkup(key, variant = "") {
+  const src = RESOURCE_ICONS[key];
+  return src ? `<img class="resource-icon ${variant}" src="${src}" alt="${RESOURCE_LABELS[key] || "Ressource"}">` : "";
+}
 function costMarkup(cost) {
-  return Object.entries(cost).filter(([, value]) => value > 0).map(([key, value]) => `<span class="cost-token cost-token--${key}"><b>${RESOURCE_SYMBOLS[key]}</b> ${formatNumber(value)}</span>`).join("");
+  return Object.entries(cost).filter(([, value]) => value > 0).map(([key, value]) => `<span class="cost-token cost-token--${key}">${resourceIconMarkup(key, "resource-icon--cost")}<b>${formatNumber(value)}</b></span>`).join("");
 }
 function addLog(type, text) {
   state.log.unshift({ at: Date.now(), type, text });
@@ -713,7 +717,7 @@ function resourceTicker() {
   const energy = energyStats();
   const blocks = Object.entries(RESOURCE_LABELS).map(([key, label]) => {
     const cap = storageCap(key);
-    return `<div class="resource"><div class="resource-top"><span>${label}</span><span class="positive">+${formatNumber(rate[key])}/h</span></div><strong>${formatNumber(state.resources[key])} <small>/ ${formatNumber(cap)}</small></strong></div>`;
+    return `<div class="resource"><div class="resource-top"><span class="resource-label">${resourceIconMarkup(key, "resource-icon--ticker")}<span>${label}</span></span><span class="positive">+${formatNumber(rate[key])}/h</span></div><strong>${formatNumber(state.resources[key])} <small>/ ${formatNumber(cap)}</small></strong></div>`;
   });
   blocks.push(`<div class="resource"><div class="resource-top"><span>Energie</span><span class="${energy.net >= 0 ? "positive" : "warning"}">${energy.net >= 0 ? "stabil" : "Defizit"}</span></div><strong>${formatNumber(energy.supply)} <small>/ ${formatNumber(energy.demand)}</small></strong></div>`);
   $("#resource-ticker").innerHTML = blocks.join("");
@@ -964,7 +968,7 @@ function missionCard(mission) {
   const viable = colonization ? hasColonyShip : needsInterceptor ? hasInterceptor : hasCargo || hasInterceptor;
   const busy = state.missions.length >= 2;
   const shipNote = colonization ? "Erfordert 1 Kolonieschiff" : needsInterceptor ? "Erfordert 1 Interzeptor" : "Erfordert 1 Frachtdrohne oder Interzeptor";
-  const reward = Object.entries(mission.reward).map(([key, value]) => `${formatNumber(value)} ${RESOURCE_SYMBOLS[key]}`).join(" · ");
+  const reward = Object.entries(mission.reward).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ");
   const outcome = colonization ? "UNBEKANNT: 96 bis 390 Baufelder" : `BEUTE: ${reward}`;
   return `<article class="mission-card ${colonization ? "colonization" : ""}"><div><span class="badge">${mission.kind}</span><h2 style="margin-top:8px">${mission.name}</h2><p>${mission.description}</p><span class="risk">${colonization ? "Planetengröße vor Landung verborgen" : `Abwehrstärke ${mission.defense}`} · ${shipNote}</span><br><span class="reward">${outcome}</span></div><button class="primary-button" data-mission="${mission.id}" ${!viable || busy ? "disabled" : ""}>${busy ? "Max. Einsätze aktiv" : viable ? (colonization ? "Kolonie gründen" : "Flotte entsenden") : "Flotte erforderlich"}</button></article>`;
 }
@@ -974,10 +978,10 @@ function mailboxMessageMarkup(message) {
 }
 function spyArchiveMarkup(report) {
   const stillValid = report.expiresAt > Date.now();
-  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${RESOURCE_SYMBOLS[key]} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small></article>`;
+  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small></article>`;
 }
 function combatArchiveMarkup(report) {
-  const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${RESOURCE_SYMBOLS[key]} ${formatNumber(value)}`).join(" · ") || "keine Beute";
+  const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") || "keine Beute";
   return `<article class="mail-card combat-archive"><div class="mail-card-head"><span class="badge">KAMPF · ${report.won ? "SIEG" : "VERLUST"}</span><time>${formatDateTime(report.at)}</time></div><h3>${escapeHtml(report.side === "attacker" ? "Raubzug gegen" : "Angriff von")} ${escapeHtml(report.opponent)}</h3><p>Angriff ${formatNumber(report.attackPower)} · Abwehr ${formatNumber(report.defensePower)}</p><p>Beute: ${loot}</p><small>Eigene Verluste: ${escapeHtml(report.attackerLosses || "keine")}</small></article>`;
 }
 function messagesView() {

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Drei Metallbarren">
+  <defs><linearGradient id="steel" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fbffff"/><stop offset=".35" stop-color="#9eb6bf"/><stop offset=".72" stop-color="#526c78"/><stop offset="1" stop-color="#c9dde1"/></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="1.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+  <g stroke="#dceef0" stroke-width="1.2" stroke-linejoin="round" filter="url(#glow)"><path fill="url(#steel)" d="m12 37 9-9h27l7 9-8 9H20z"/><path fill="url(#steel)" d="m8 47 9-9h27l7 9-8 9H16z"/><path fill="url(#steel)" d="m16 27 9-9h27l7 9-8 9H24z"/></g>
+  <path d="M25 22h22l3 4H22zM21 41h23l3 4H18z" fill="#fff" opacity=".45"/>
+</svg>
