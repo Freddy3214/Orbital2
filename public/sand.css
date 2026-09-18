@@ -14,3 +14,4 @@ body { background:#27251f; }.starfield { background:radial-gradient(ellipse at t
 @media(max-width:900px){.fleet-operation{grid-template-columns:1fr;}.hero-planet-art{width:min(44%,220px);}}
 @media(max-width:600px){.hero-planet-art{float:none;width:min(100%,260px);margin:0 auto 18px;}.planet-mini-card{grid-template-columns:72px minmax(0,1fr);}.planet-mini-art{width:72px;}}
 .queue-planning-panel { margin-bottom:15px; }.queue-planning-panel .queue-row.waiting { background:#2d2a2366; }.queue-planning-panel .queue-top > span { text-align:right; }
+.atlas-art { position:relative; display:block; overflow:hidden; background:#070b11; }.atlas-art::before { content:""; position:absolute; left:0; top:50%; width:400%; aspect-ratio:var(--art-ratio); background-image:var(--art-image); background-repeat:no-repeat; background-size:100% 100%; transform:translate(var(--art-x),var(--art-y)); transform-origin:top left; }

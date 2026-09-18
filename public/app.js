@@ -116,10 +116,6 @@ const RESEARCH = {
   },
 };
 
-BUILDINGS.solarPlant.image = "https://images.pexels.com/photos/11455626/pexels-photo-11455626.jpeg?auto=compress&w=600";
-BUILDINGS.crystalMine.image = "https://upload.wikimedia.org/wikipedia/commons/a/ae/Amethyst_crystals_close.jpg";
-BUILDINGS.researchLab.image = "https://images.unsplash.com/photo-1617155093730-a8bf47be792d?auto=format&fit=crop&w=600&q=75";
-for (const item of Object.values(RESEARCH)) if (item.image.includes("research-lab")) item.image = BUILDINGS.researchLab.image;
 const SHIPS = {
   spyProbe: {
     icon: "◉", image: "/assets/sensor-array.svg", name: "Aufklärsonde", cost: { metal: 80, crystal: 180, tritium: 25 },
@@ -164,6 +160,29 @@ for (const [key,item] of Object.entries(DEFENSE)) SHIPS[key] = {
   stats:`Abwehr ${item.power}${item.antiSpy ? ` · Sondenabwehr +${Math.round(item.antiSpy*100)} Prozentpunkte` : ""}`,
   requires:s=>[requirement(s.buildings.shipyard>=item.level,`Orbitalwerft Stufe ${item.level}`),requirement(s.research.energyTech>=item.level,`Energietechnik Stufe ${item.level}`)]
 };
+const FACILITY_ATLAS = "/assets/facility-atlas-v1.png";
+const FLEET_ATLAS = "/assets/fleet-atlas-v1.png";
+function assignAtlas(catalog, atlas, ratio, rows, positions) {
+  for (const [key, [column, row]] of Object.entries(positions)) if (catalog[key]) Object.assign(catalog[key], {
+    atlas, atlasRatio:ratio, artX:`${column * -25}%`, artY:`${(row + .5) * -(100 / rows)}%`,
+  });
+}
+assignAtlas(BUILDINGS, FACILITY_ATLAS, 1.422, 3, {
+  metalMine:[0,0], crystalMine:[1,0], tritiumSynthesizer:[2,0], solarPlant:[3,0],
+  metalStorage:[0,1], crystalStorage:[0,1], tritiumStorage:[0,1], roboticsFactory:[1,1],
+  researchLab:[2,1], shipyard:[3,1], commandCenter:[0,2],
+});
+assignAtlas(RESEARCH, FACILITY_ATLAS, 1.422, 3, {
+  deepSpaceSensors:[1,2], energyTech:[2,0], combustionDrive:[3,1],
+  avionics:[2,1], plasmaTheory:[2,1], constructionEngineering:[1,1],
+});
+assignAtlas(SHIPS, FLEET_ATLAS, 2.001, 2, {
+  cargoDrone:[0,0], smallTransport:[1,0], mediumTransport:[2,0], largeTransport:[3,0],
+  frigate:[0,1], cruiser:[1,1], battleship:[2,1], destroyer:[3,1],
+});
+assignAtlas(SHIPS, FACILITY_ATLAS, 1.422, 3, {
+  rocketBattery:[3,2], teslaCoil:[2,2], missileDefense:[3,2], sensorJammer:[1,2],
+});
 const MISSIONS = {
   derelict: {
     id: "derelict", name: "Verlassene Raffinerie", coordinates: "G 02 · Sektor 17 · Orbit 07", kind: "Bergung", minutes: 0.45,
@@ -347,6 +366,10 @@ function projectedBuildingState() {
 function planetArtMarkup(planet, className = "") {
   const type = PLANET_TYPES[planet.type] || PLANET_TYPES.temperate;
   return `<span class="planet-art ${className}" style="--planet-position:${type.position}" role="img" aria-label="${escapeHtml(type.name)}: ${escapeHtml(type.terrain)}"></span>`;
+}
+function entityArtMarkup(config) {
+  if (config.atlas) return `<span class="entity-art atlas-art" style="--art-image:url('${config.atlas}');--art-ratio:${config.atlasRatio};--art-x:${config.artX};--art-y:${config.artY}" role="img" aria-label="Illustration ${escapeHtml(config.name)}"></span>`;
+  return `<img class="entity-art" src="${config.image}" alt="Illustration ${escapeHtml(config.name)}">`;
 }
 
 function metalOutput(level) { return Math.floor(30 * level * 1.1 ** level) + 30; }
@@ -762,7 +785,7 @@ function entityCard(kind, key, config, level, cost, requirements, queueKind) {
     : `<button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-${kind}="${key}" ${disabled ? "disabled" : ""}>${action}</button>`;
   const levelDisplay = atCap ? `<strong>${LEVEL_CAP}</strong> · MAX` : `<strong>${level}</strong> → <strong>${target}</strong>`;
   const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Erster Abschluss in ${formatDuration(isBuilding ? buildTime(cost, target) : researchTime(cost))}</span>`;
-  return `<article class="entity-card entity-card--${kind} entity-card--${key} ${locked || noFields ? "locked" : ""}" style="--level-progress:${Math.min(100, level)}%"><img class="entity-art" src="${config.image}" alt="Illustration ${escapeHtml(config.name)}"><div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><div class="level-meter" aria-label="Stufe ${level} von 100"><i></i></div><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>Felder beim Erstbau: ${config.fieldCost}</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
+  return `<article class="entity-card entity-card--${kind} entity-card--${key} ${locked || noFields ? "locked" : ""}" style="--level-progress:${Math.min(100, level)}%">${entityArtMarkup(config)}<div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><div class="level-meter" aria-label="Stufe ${level} von 100"><i></i></div><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>Felder beim Erstbau: ${config.fieldCost}</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
 }
 function energyUseFor(key, level) {
   if (key === "metalMine" || key === "crystalMine") return Math.floor(10 * level * 1.1 ** level);
@@ -788,7 +811,7 @@ function shipCard(key, ship) {
   const disabled = locked || !affordable || Boolean(queue);
   const action = queue?.key === key ? "Im Bau" : queue ? "Werft belegt" : locked ? "Voraussetzung fehlt" : affordable ? "Einheit bauen" : "Rohstoffe fehlen";
   const needs = ship.requires(state).filter((item) => !item.ok).map((item) => item.text);
-  return `<article class="entity-card entity-card--ship entity-card--${key} ${locked ? "locked" : ""}"><img class="entity-art" src="${ship.image}" alt="Illustration ${escapeHtml(ship.name)}"><div class="entity-icon">${ship.icon}</div><div class="entity-info"><h2>${ship.name} <span class="badge">verfügbar: ${ship.isDefense ? (activePlanet().defenses?.[key] || 0) : state.ships[key]}</span></h2><p>${ship.description}</p><div class="meta"><span>${ship.stats}</span><span>Werftzeit: ${formatDuration(shipTime(ship.cost))}</span></div>${needs.length ? `<div class="unlock-note">${needs.join(" · ")}</div>` : ""}</div><div class="entity-action"><p class="cost">${costMarkup(ship.cost)}</p><button class="${locked ? "secondary-button" : "primary-button"}" data-ship="${key}" ${disabled ? "disabled" : ""}>${action}</button></div></article>`;
+  return `<article class="entity-card entity-card--ship entity-card--${key} ${locked ? "locked" : ""}">${entityArtMarkup(ship)}<div class="entity-icon">${ship.icon}</div><div class="entity-info"><h2>${ship.name} <span class="badge">verfügbar: ${ship.isDefense ? (activePlanet().defenses?.[key] || 0) : state.ships[key]}</span></h2><p>${ship.description}</p><div class="meta"><span>${ship.stats}</span><span>Werftzeit: ${formatDuration(shipTime(ship.cost))}</span></div>${needs.length ? `<div class="unlock-note">${needs.join(" · ")}</div>` : ""}</div><div class="entity-action"><p class="cost">${costMarkup(ship.cost)}</p><button class="${locked ? "secondary-button" : "primary-button"}" data-ship="${key}" ${disabled ? "disabled" : ""}>${action}</button></div></article>`;
 }
 function defenseView() {
   return `<section class="view-heading"><h1>Planetare Verteidigung · ${escapeHtml(activePlanet().name)}</h1><p>Stationäre Anlagen bleiben auf dieser Welt. Sie verstärken die Abwehr bei Angriffen; Störsender und Raketenabwehr erhöhen das Sonden-Abfangrisiko.</p></section><section class="entity-list">${Object.entries(SHIPS).filter(([,s])=>s.isDefense).map(([key,s])=>shipCard(key,s)).join("")}</section>`;
@@ -858,7 +881,7 @@ function techtreeView() {
   }));
 }
 function helpView() {
-  return `<section class="view-heading"><h1>Hilfe & Bildnachweise</h1></section><section class="panel panel-inner"><h2>Sternenkarte</h2><p>Jeder weiße Stern ist ein auswählbares Ziel. Freie Welten lassen sich mit einem Kolonieschiff besiedeln. Besetzte Welten können ausgespäht und mit gültigem Spionagebericht angegriffen werden. Die Größe freier Welten (96–390 Felder) bleibt bis zur Besiedlung verborgen.</p><h2>Fotografien</h2><p>Solaranlage: <a href="https://www.pexels.com/photo/close-up-of-solar-panels-11455626/" target="_blank" rel="noopener noreferrer">Tobi &Chris / Pexels</a> · Pexels-Lizenz.<br>Kristalle: <a href="https://commons.wikimedia.org/wiki/File:Amethyst_crystals_close.jpg" target="_blank" rel="noopener noreferrer">Lisa Ann Yount / Wikimedia Commons</a> · CC0.<br>Labor: <a href="https://unsplash.com/photos/gloved-hand-holding-laboratory-beaker-cuqp2Jzz_lY" target="_blank" rel="noopener noreferrer">RephiLe water / Unsplash</a> · Unsplash-Lizenz.</p><p>Fotos werden von den jeweiligen Bildanbietern geladen. Bei Ladeproblemen erscheinen die vorhandenen Illustrationen.</p></section>`;
+  return `<section class="view-heading"><h1>Hilfe & Bildnachweise</h1></section><section class="panel panel-inner"><h2>Sternenkarte</h2><p>Jeder weiße Stern ist ein auswählbares Ziel. Freie Welten lassen sich mit einem Kolonieschiff besiedeln. Besetzte Welten können ausgespäht und mit gültigem Spionagebericht angegriffen werden. Die Größe freier Welten (96–390 Felder) bleibt bis zur Besiedlung verborgen.</p><h2>Grafikstil</h2><p>Die Anlagen-, Forschungs-, Verteidigungs- und Flottengrafiken wurden als eigenständige Sci-Fi-Illustrationen für Orbital Foundry erstellt. Sie greifen die Atmosphäre klassischer Weltraum-Aufbauspiele auf, ohne Originalgrafiken anderer Spiele zu verwenden.</p><p>Die Bildatlanten werden direkt vom Spielserver geladen; externe Stockfoto-Anbieter werden dafür nicht mehr benötigt.</p></section>`;
 }
 content.addEventListener("error", (event) => {
   if (event.target.tagName === "IMG" && event.target.src.startsWith("https://")) event.target.src = "/assets/research-lab.svg";
