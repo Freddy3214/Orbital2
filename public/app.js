@@ -229,6 +229,9 @@ let galaxyError = "";
 let actionBusy = false;
 let galaxyLoading = false;
 let lastGalaxyFetch = 0;
+let playerSearchResults = [];
+let messageRecipient = "";
+let messageSubject = "";
 
 const PLANET_TYPES = {
   temperate: { name: "Gemäßigte Welt", terrain: "Grünland, Meere und Gebirgsketten", position: "0% 0%", accent: "cyan" },
@@ -320,6 +323,8 @@ function ensureStateShape() {
   for (const key of Object.keys(RESEARCH)) state.research[key] ??= 0;
   state.ships.spyProbe ??= 0;
   state.spyReports ??= [];
+  state.combatReports ??= [];
+  state.messages ??= [];
   state.notifications ??= [];
   for (const group of [state.buildings, state.research]) {
     for (const key of Object.keys(group || {})) group[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(group[key]) || 0)));
@@ -962,8 +967,61 @@ function missionCard(mission) {
   const outcome = colonization ? "UNBEKANNT: 96 bis 390 Baufelder" : `BEUTE: ${reward}`;
   return `<article class="mission-card ${colonization ? "colonization" : ""}"><div><span class="badge">${mission.kind}</span><h2 style="margin-top:8px">${mission.name}</h2><p>${mission.description}</p><span class="risk">${colonization ? "Planetengröße vor Landung verborgen" : `Abwehrstärke ${mission.defense}`} · ${shipNote}</span><br><span class="reward">${outcome}</span></div><button class="primary-button" data-mission="${mission.id}" ${!viable || busy ? "disabled" : ""}>${busy ? "Max. Einsätze aktiv" : viable ? (colonization ? "Kolonie gründen" : "Flotte entsenden") : "Flotte erforderlich"}</button></article>`;
 }
+function mailboxMessageMarkup(message) {
+  const inbound = message.direction === "inbound";
+  return `<article class="mail-card ${inbound && !message.read ? "unread" : ""}"><div class="mail-card-head"><span class="badge">${inbound ? "EINGANG" : "GESENDET"}</span><time>${formatDateTime(message.at)}</time></div><h3>${escapeHtml(message.subject)}</h3><p><b>${inbound ? "Von" : "An"}:</b> ${escapeHtml(inbound ? message.sender : message.recipient)}</p><p>${escapeHtml(message.body)}</p>${inbound ? `<button class="secondary-button" data-reply-to="${escapeHtml(message.sender)}" data-reply-subject="${escapeHtml(message.subject)}">Antworten</button>` : ""}</article>`;
+}
+function spyArchiveMarkup(report) {
+  const stillValid = report.expiresAt > Date.now();
+  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${RESOURCE_SYMBOLS[key]} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small></article>`;
+}
+function combatArchiveMarkup(report) {
+  const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${RESOURCE_SYMBOLS[key]} ${formatNumber(value)}`).join(" · ") || "keine Beute";
+  return `<article class="mail-card combat-archive"><div class="mail-card-head"><span class="badge">KAMPF · ${report.won ? "SIEG" : "VERLUST"}</span><time>${formatDateTime(report.at)}</time></div><h3>${escapeHtml(report.side === "attacker" ? "Raubzug gegen" : "Angriff von")} ${escapeHtml(report.opponent)}</h3><p>Angriff ${formatNumber(report.attackPower)} · Abwehr ${formatNumber(report.defensePower)}</p><p>Beute: ${loot}</p><small>Eigene Verluste: ${escapeHtml(report.attackerLosses || "keine")}</small></article>`;
+}
+function messagesView() {
+  const messages = [...(state.messages || [])].sort((a, b) => b.at - a.at);
+  const spyReports = [...(state.spyReports || [])].sort((a, b) => b.createdAt - a.createdAt);
+  const combatReports = [...(state.combatReports || [])].sort((a, b) => b.at - a.at);
+  const unread = messages.filter((message) => message.direction === "inbound" && !message.read).length;
+  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDOKANAL</span><h1>Nachrichten & Berichte</h1><p>Direktnachrichten, Aufklärung und Kampfergebnisse bleiben hier als Archiv erhalten.</p></div><span class="sector-label">${unread} UNGELESEN · ${messages.length} NACHRICHTEN</span></section><div class="grid two-column"><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Neue Nachricht</h2><span>DIREKTKANAL</span></div><form id="message-compose" class="message-compose"><label>Empfänger<input name="recipient" required maxlength="20" value="${escapeHtml(messageRecipient)}" placeholder="Kommandantenname"></label><label>Betreff<input name="subject" required maxlength="72" value="${escapeHtml(messageSubject)}" placeholder="z. B. Handelsangebot"></label><label>Nachricht<textarea name="body" required maxlength="1200" rows="5" placeholder="Deine Nachricht an einen anderen Kommandanten"></textarea></label><button class="primary-button" type="submit">Nachricht senden</button></form></div></section><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Systemalarme</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section></div><section class="archive-section"><div class="panel-title"><h2>Postfach</h2><span>${messages.length} EINTRÄGE</span></div><div class="mail-grid">${messages.map(mailboxMessageMarkup).join("") || `<div class="empty-state"><strong>Postfach leer</strong>Suche einen Spieler und eröffne einen direkten Kanal.</div>`}</div></section><section class="archive-section"><div class="panel-title"><h2>Spionageberichte</h2><span>${spyReports.length} ARCHIVIERT</span></div><div class="mail-grid">${spyReports.map(spyArchiveMarkup).join("") || `<div class="empty-state"><strong>Keine Aufklärung verfügbar</strong>Wähle in der Galaxie einen gegnerischen Planeten und entsende Sonden.</div>`}</div></section><section class="archive-section"><div class="panel-title"><h2>Kampfberichte</h2><span>${combatReports.length} ARCHIVIERT</span></div><div class="mail-grid">${combatReports.map(combatArchiveMarkup).join("") || `<div class="empty-state"><strong>Keine Kampfberichte</strong>Angriffe und Abwehraktionen werden nach dem Gefecht hier gespeichert.</div>`}</div></section>`;
+}
+function playersView() {
+  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDANTENNETZ</span><h1>Spielersuche</h1><p>Finde einen Kommandanten und eröffne einen privaten Direktkanal. Der Empfänger erhält eine Meldung im eigenen Postfach.</p></div><span class="sector-label">${playerSearchResults.length} TREFFER</span></section><section class="panel"><div class="panel-inner"><form id="player-search-form" class="player-search"><input name="query" maxlength="20" placeholder="Kommandantenname suchen" autofocus><button class="primary-button" type="submit">Suchen</button></form></div></section><section class="archive-section"><div class="panel-title"><h2>Gefundene Kommandanten</h2><span>ONLINE-DATENBANK</span></div><div class="mail-grid">${playerSearchResults.map((player) => `<article class="mail-card"><span class="badge">KOMMANDANT</span><h3>${escapeHtml(player.username)}</h3><p>${formatNumber(player.score)} Punkte · ${player.planets} Planet${player.planets === 1 ? "" : "en"}</p><button class="primary-button" data-message-player="${escapeHtml(player.username)}">Nachricht schreiben</button></article>`).join("") || `<div class="empty-state"><strong>Suche starten</strong>Gib mindestens drei Zeichen des Kommandantennamens ein.</div>`}</div></section>`;
+}
 function logView() {
   return `<section class="view-heading"><div><span class="eyebrow">EREIGNISSPEICHER</span><h1>Flugdaten und Industrieprotokoll.</h1><p>Die jüngsten achtzig Ereignisse bleiben im serverseitigen Spielstand erhalten.</p></div><span class="sector-label">${state.log.length} EINTRÄGE</span></section><section class="log-list">${state.log.map((entry) => `<article class="log-row ${escapeHtml(entry.type)}"><time>${new Date(entry.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>${escapeHtml(entry.text)}</span></article>`).join("")}</section>`;
+}
+async function searchPlayers(query) {
+  try {
+    const response = await fetch(`/api/players?q=${encodeURIComponent(query)}`, { credentials: "same-origin" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Spielersuche nicht verfügbar.");
+    playerSearchResults = payload.players || [];
+    render();
+  } catch (error) { toast(error.message || "Spielersuche nicht verfügbar.", true); }
+}
+async function sendPlayerMessage(form) {
+  if (actionBusy) return;
+  const formData = new FormData(form);
+  const recipient = String(formData.get("recipient") || "").trim();
+  const subject = String(formData.get("subject") || "").trim();
+  const body = String(formData.get("body") || "").trim();
+  if (!recipient || !subject || !body) return;
+  actionBusy = true;
+  try {
+    if (!await save({ quiet: true })) return;
+    const response = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ recipient, subject, body }) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Nachricht konnte nicht gesendet werden.");
+    state = payload.state;
+    ensureStateShape();
+    messageRecipient = "";
+    messageSubject = "";
+    toast(`Nachricht an ${recipient} gesendet.`);
+    render();
+  } catch (error) { toast(error.message || "Nachricht konnte nicht gesendet werden.", true);
+  } finally { actionBusy = false; }
 }
 function render() {
   if (!state) return;
@@ -973,7 +1031,7 @@ function render() {
   if (document.activeElement !== planetSwitch) planetSwitch.innerHTML = state.planets.map(planet => `<option value="${escapeHtml(planet.id)}" ${planet.id === activePlanet().id ? "selected" : ""}>${escapeHtml(planet.name)}</option>`).join("");
   $(".planet-card strong").textContent = activePlanet().name;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
-  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
+  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   content.innerHTML = views[activeView]();
 }
 
@@ -1066,6 +1124,10 @@ $("#nav").addEventListener("click", (event) => {
 content.addEventListener("input", event => {
   if (event.target.dataset.fleetKey) raidSelection[event.target.dataset.fleetKey] = Math.max(0,Math.min(Number(event.target.max),Math.floor(Number(event.target.value)||0)));
 });
+content.addEventListener("submit", event => {
+  if (event.target.id === "message-compose") { event.preventDefault(); sendPlayerMessage(event.target); }
+  if (event.target.id === "player-search-form") { event.preventDefault(); const query = String(new FormData(event.target).get("query") || "").trim(); if (query.length < 3) { toast("Bitte mindestens drei Zeichen eingeben.", true); return; } searchPlayers(query); }
+});
 content.addEventListener("pointerdown", event => {
   const map = event.target.closest(".universe-map");
   if (!map || event.button !== 0) return;
@@ -1103,6 +1165,19 @@ content.addEventListener("wheel", event => {
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
+  if (button.dataset.messagePlayer) {
+    messageRecipient = button.dataset.messagePlayer;
+    messageSubject = "";
+    activeView = "messages";
+    render();
+    return;
+  }
+  if (button.dataset.replyTo) {
+    messageRecipient = button.dataset.replyTo;
+    messageSubject = `Re: ${button.dataset.replySubject || "Nachricht"}`.slice(0, 72);
+    render();
+    return;
+  }
   if (button.dataset.signalId) {
     if (Date.now() < suppressMapClickUntil) return;
     selectedSignalId = button.dataset.signalId;
