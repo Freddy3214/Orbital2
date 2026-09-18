@@ -125,6 +125,8 @@ async function updateAccountState(key, state) {
   if (asWholeNumber(state.revision) !== asWholeNumber(previous.state.revision)) fail("Der Spielstand hat sich geändert. Bitte synchronisieren.", 409);
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
+  state.planets = state.planets.filter(p => !String(p.id).startsWith("frontier-"));
+  state.planets.push(...previous.state.planets.filter(p => String(p.id).startsWith("frontier-")));
   state.revision = asWholeNumber(previous.state.revision) + 1;
   if (pool) {
     await pool.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(state)]);
@@ -180,6 +182,8 @@ function activeGalaxyAccount(account) {
 function signalId(account) { return `${account.id}:${primaryPlanet(account).id}`; }
 function galaxyPosition(account) {
   const planet = primaryPlanet(account);
+  const site = frontierSites.find(site => site.id === planet.id);
+  if (site) return site.position;
   const seed = stableHash(`${account.id}:${planet.id || "home"}`);
   return {
     x: 5 + seed % 91,
@@ -188,6 +192,44 @@ function galaxyPosition(account) {
 }
 function galaxyDistance(left, right) {
   return Math.round(Math.hypot(left.x - right.x, left.y - right.y) * 10) / 10;
+}
+const frontierSites = Array.from({ length: 100 }, (_, i) => ({ id: `frontier-${i}`, signature: `Kepler ${i + 1}`, position: { x: 5 + (i % 10) * 9 + (i * 7 % 5), y: 5 + Math.floor(i / 10) * 9 + (i * 3 % 5) }, free: true }));
+async function colonizeSite(key, targetId) {
+  const site = frontierSites.find(site => site.id === targetId);
+  if (!site) fail("Keine besiedelbare Welt.", 404);
+  const apply = (account, accounts) => {
+    if (accounts.some(a => a.state.planets.some(p => p.id === targetId))) fail("Diese Welt wurde bereits besiedelt.", 409);
+    if (galaxyDistance(galaxyPosition(activeGalaxyAccount(account)), site.position) > sensorRange(account)) fail("Ziel außerhalb der Sichtweite.", 403);
+    if (!asWholeNumber(account.state.ships.colonyShip)) fail("Ein Kolonieschiff ist erforderlich.", 400);
+    if (account.state.planets.length >= 20) fail("Maximal 20 Welten möglich.", 400);
+    const types = [["temperate","Gemäßigte Welt"],["arid","Wüstenwelt"],["ocean","Ozeanwelt"],["ice","Eiswelt"],["volcanic","Vulkanwelt"]];
+    const [type, classification] = types[randomBytes(1)[0] % types.length];
+    const planet = { id: site.id, name: site.signature, type, classification, fields: 96 + randomBytes(4).readUInt32BE() % 295, usedFields: 0, coordinates: `X ${site.position.x} · Y ${site.position.y}`, colonizedAt: Date.now(), homeworld: false };
+    account.state.ships.colonyShip -= 1;
+    account.state.planets.push(planet);
+    account.state.activePlanetId = planet.id;
+    account.state.revision = asWholeNumber(account.state.revision) + 1;
+    addStateLog(account.state, "mission", `${planet.name} besiedelt: ${planet.fields} Baufelder. Kolonieschiff verbraucht.`);
+    return { state: account.state, planet };
+  };
+  if (pool) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(812901)");
+      const current = await client.query("SELECT * FROM accounts WHERE account_key = $1 FOR UPDATE", [key]);
+      const accounts = await client.query("SELECT * FROM accounts");
+      const result = apply(accountFromRow(current.rows[0]), accounts.rows.map(accountFromRow));
+      await client.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(result.state)]);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  const database = await loadLocalDatabase();
+  const result = apply(database.accounts[key], Object.values(database.accounts));
+  await saveLocalDatabase(database);
+  return result;
 }
 function sensorRange(account) {
   const level = asWholeNumber(account.state?.research?.deepSpaceSensors);
@@ -519,18 +561,27 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/leaderboard") {
       const ranking = (await allAccounts()).map((account) => ({
         commander: account.username, score: score(account.state), planets: account.state.planets?.length || 1,
-      })).sort((a, b) => b.score - a.score || a.commander.localeCompare(b.commander, "de")).slice(0, 10);
+      })).sort((a, b) => b.score - a.score || a.commander.localeCompare(b.commander, "de"));
       return json(response, 200, ranking);
     }
     if (request.method === "GET" && url.pathname === "/api/galaxy") {
       const current = await authenticatedAccount(request);
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const observer = activeGalaxyAccount(current.account);
-      const contacts = (await allAccounts()).filter((account) => account.id !== current.account.id)
+      const accounts = await allAccounts();
+      const contacts = accounts.filter((account) => account.id !== current.account.id)
         .flatMap((account) => account.state.planets.map((focusPlanet) => ({ ...account, focusPlanet })))
         .filter((account) => targetIsVisible(observer, account)).map((account) => publicGalaxyRecord(account, observer))
         .sort((a, b) => a.distance - b.distance).slice(0, 200);
+      const claimed = new Set(accounts.flatMap(a => a.state.planets.map(p => p.id)));
+      contacts.push(...frontierSites.filter(site => !claimed.has(site.id)).map(site => ({ ...site, distance: galaxyDistance(galaxyPosition(observer), site.position) })).filter(site => site.distance <= sensorRange(observer)));
       return json(response, 200, { contacts, origin: galaxyPosition(observer), radius: sensorRange(observer), updatedAt: Date.now() });
+    }
+    if (request.method === "POST" && url.pathname === "/api/colonize") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const body = await readBody(request);
+      return json(response, 200, await mutate(() => colonizeSite(current.key, String(body.targetId || ""))));
     }
     if (request.method === "POST" && ["/api/raids", "/api/spy"].includes(url.pathname)) {
       const current = await authenticatedAccount(request);
