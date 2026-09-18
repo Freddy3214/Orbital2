@@ -320,6 +320,7 @@ function ensureStateShape() {
   for (const key of Object.keys(RESEARCH)) state.research[key] ??= 0;
   state.ships.spyProbe ??= 0;
   state.spyReports ??= [];
+  state.notifications ??= [];
   for (const group of [state.buildings, state.research]) {
     for (const key of Object.keys(group || {})) group[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(group[key]) || 0)));
   }
@@ -539,9 +540,11 @@ async function save({ quiet = false } = {}) {
     if (response.status === 409) {
       const latest = await fetch("/api/state");
       if (!latest.ok) throw new Error("Synchronisierung fehlgeschlagen");
+      const knownNotificationIds = new Set((state.notifications || []).map((notice) => notice.id));
       state = (await latest.json()).state;
       ensureStateShape();
-      toast("Neue Ereignisse eingetroffen. Spielstand synchronisiert.");
+      const newest = state.notifications.find((notice) => !knownNotificationIds.has(notice.id));
+      toast(newest ? `${newest.title}: ${newest.text}` : "Neue Ereignisse eingetroffen. Spielstand synchronisiert.", newest?.priority === "high");
       render();
       return false;
     }
@@ -730,6 +733,13 @@ function queueRows(buildingsOnly = false) {
   }).join("")}</div>`;
 }
 
+function notificationMarkup() {
+  const notices = (state.notifications || []).slice(0, 6);
+  if (!notices.length) return `<div class="empty-state"><strong>Keine neuen Warnungen</strong>Sensorik und Ereignisprotokoll überwachen deinen Sektor.</div>`;
+  const icons = { scan: "◉", combat: "⚠", mission: "↗", system: "◎" };
+  return `<div class="log-list notification-list">${notices.map((notice) => `<article class="log-row ${escapeHtml(notice.kind || "system")} ${notice.priority === "high" ? "notification-high" : ""}"><time>${new Date(notice.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</time><span><b>${icons[notice.kind] || "◎"} ${escapeHtml(notice.title || "Meldung")}</b><small>${escapeHtml(notice.text || "")}</small></span></article>`).join("")}</div>`;
+}
+
 function overviewView() {
   const energy = energyStats();
   const rate = production();
@@ -741,6 +751,7 @@ function overviewView() {
       <section class="panel hero-panel">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} ist ${planetSizeLabel(planet.fields).toLowerCase()}.</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(state.buildings).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length}</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
       <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
+      <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Industrieprotokoll</h2><span>PRO STUNDE</span></div><div class="stat-list"><div class="stat-line"><span>Metallförderung</span><strong>+${formatNumber(rate.metal)}</strong></div><div class="stat-line"><span>Kristallförderung</span><strong>+${formatNumber(rate.crystal)}</strong></div><div class="stat-line"><span>Tritiumproduktion</span><strong>+${formatNumber(rate.tritium)}</strong></div><div class="stat-line"><span>Mineneffizienz</span><strong class="${energy.efficiency === 1 ? "energy-good" : "energy-warning"}">${formatNumber(energy.efficiency * 100)}%</strong></div></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Nächste Upgrades</h2><span>ROUTE</span></div>${upgradePathMarkup()}</div></section>
     </div>
@@ -912,7 +923,7 @@ function galaxyInspector() {
   const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
   return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · BESIEDELT</span><h3>${escapeHtml(target.name)}</h3><p>Kolonie von <strong>${escapeHtml(target.owner || "Unbekannt")}</strong>. Für Wirtschaft, Flotte und Verteidigung ist weiterhin ein Sondenscan nötig.</p>
   <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(target.targetId)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(target.targetId)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(target.targetId)}" ${!report || actionBusy || !Object.keys(FLEET).some(key=>state.ships[key]>0) ? "disabled" : ""}>Ausgewählte Flotte angreifen lassen</button></div>${fleetSelector()}
-  ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/4</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString("de-DE")} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}${reportSection("Planetare Abwehr", report.defenses, DEFENSE)}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
+  ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/5</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString("de-DE")} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder · ${report.world.usedFields || 0} bebaut</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}${reportSection("Planetare Abwehr", report.defenses, DEFENSE)}${report.activeMissions !== null && report.activeMissions !== undefined ? `<section class="intel-section"><h3>Flottenlage</h3><div class="intel-values"><div><span>Aktive Verbände</span><strong>${formatNumber(report.activeMissions)}</strong></div></div></section>` : ""}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
   </section></aside>`;
 }
 function galaxyView() {
