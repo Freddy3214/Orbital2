@@ -7,6 +7,7 @@
     <title>Orbital Foundry</title>
     <link rel="stylesheet" href="/styles.css" />
     <link rel="stylesheet" href="/galaxy.css" />
+    <link rel="stylesheet" href="/classic.css?v=8" />
   </head>
   <body>
     <div class="starfield" aria-hidden="true"></div>
@@ -17,6 +18,7 @@
           <div><span>ORBITAL</span><strong>FOUNDRY</strong></div>
         </div>
         <div id="resource-ticker" class="resource-ticker"></div>
+        <label class="planet-switch">Aktiver Planet<select id="planet-switch" aria-label="Aktiven Planeten wechseln"></select></label>
         <div class="commander"><span class="status-dot"></span><span id="commander-name"></span><button class="icon-button" id="save-button" title="Jetzt speichern">↻</button><button class="icon-button" id="logout-button" title="Abmelden">⇥</button></div>
       </header>
 
@@ -27,12 +29,16 @@
           <span>G 02 · Sektor 17 · Orbit 04</span>
         </div>
         <nav id="nav" aria-label="Spielbereiche">
+          <h2>Hauptmenü</h2>
           <button data-view="overview" class="active"><span>◉</span> Kommando</button>
           <button data-view="buildings"><span>▦</span> Infrastruktur</button>
           <button data-view="research"><span>⌬</span> Forschung</button>
           <button data-view="shipyard"><span>➤</span> Werft</button>
-          <button data-view="galaxy"><span>✦</span> Galaxie</button>
+          <button data-view="galaxy"><span>✦</span> Sonnensystem</button>
+          <h2>Spielermenü</h2>
           <button data-view="log"><span>≡</span> Ereignislog</button>
+          <h2>Information</h2>
+          <p class="nav-info">Tiefraumsensorik erweitert deinen Sichtkreis. Aufklärsonden enthüllen Details fremder Welten.</p>
         </nav>
         <div class="sidebar-footer"><span>SERVER</span><strong>EU-TEST-01</strong><small id="save-state">verbunden</small></div>
       </aside>

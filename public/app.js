@@ -753,15 +753,23 @@ function galaxyView() {
   const left = center.x - size / 2, top = center.y - size / 2;
   const point = (p) => ({ x: (p.x - left) / size * 100, y: (p.y - top) / size * 100 });
   const origin = point(galaxyOrigin);
+  const selected = galaxyIntel.find(signal => signal.id === selectedSignalId);
+  const target = selected ? point(selected.position) : null;
+  const stars = Array.from({ length: 1600 }, (_, i) => {
+    const p = point({ x: ((i * 127.13 + Math.sin(i * 41) * 19) % 100 + 100) % 100, y: ((i * 73.71 + Math.cos(i * 17) * 31) % 100 + 100) % 100 });
+    return `<circle cx="${p.x}" cy="${p.y}" r="${i % 11 === 0 ? .12 : .045}" fill="white" opacity="${.25 + (i % 7) / 10}"/>`;
+  }).join("");
+  const space = `<svg class="survey-field" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="survey-window"><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}"/></clipPath></defs><g clip-path="url(#survey-window)"><rect width="100" height="100" fill="#020309"/>${stars}</g><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}" fill="none" stroke="#73ae82" stroke-width=".12"/><path d="M ${origin.x} 0 V 100 M 0 ${origin.y} H 100" stroke="#59ba73" stroke-width=".12"/>${target ? `<path d="M ${target.x} 0 V 100 M 0 ${target.y} H 100" stroke="#e16e87" stroke-width=".15"/>` : ""}</svg>`;
   const markers = galaxyIntel.map((signal) => {
     const p = point(signal.position);
     if (p.x < 2 || p.x > 97 || p.y < 3 || p.y > 95) return "";
     return `<button class="signal-point ${signal.id === selectedSignalId ? "selected" : ""}" style="left:${p.x}%;top:${p.y}%" data-signal-id="${escapeHtml(signal.id)}" aria-label="Planet ${escapeHtml(signal.signature)} bei ${galaxyCoordinates(signal.position)}"><i></i><span>${escapeHtml(signal.signature)}</span></button>`;
   }).join("");
-  return `<section class="view-heading"><div><span class="eyebrow">TIEFRAUMKARTOGRAFIE</span><h1>Das dunkle Universum.</h1><p>Weiße Signaturen. Unbekannte Absichten. Deine Sensoren bestimmen, wie weit du sehen kannst.</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
+  return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Grau: unerforscht · Grün: aktive Welt · Rot: ausgewähltes Ziel</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
   <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="home">Heimat zentrieren</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
-  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte"><div class="sensor-circle" style="left:${origin.x}%;top:${origin.y}%;width:${galaxyRadius * 2 / size * 100}%"></div>${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>Heimat</span></div><div class="map-caption">SICHTKREIS · ${galaxyIntel.length} SIGNAL${galaxyIntel.length === 1 ? "" : "E"}<small>Außerhalb der Reichweite bleiben Welten verborgen.</small></div></section>${galaxyInspector()}</div>
+  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SIGNALE<small>Benannte Punkte sind echte Welten. Unbeschriftete Sterne bilden den Hintergrund.</small></div></section>${galaxyInspector()}</div>
+  <section class="contact-console"><div class="panel-title"><h2>Erfasste Welten</h2><span>${galaxyIntel.length} KONTAKTE</span></div><table><thead><tr><th>Planet</th><th>X : Y</th><th>Entfernung</th><th>Aufklärung</th></tr></thead><tbody>${galaxyIntel.map(signal => `<tr class="${signal.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(signal.id)}">${escapeHtml(signal.signature)}</button></td><td>${galaxyCoordinates(signal.position)}</td><td>${signal.distance} Sektoren</td><td>${currentReport(signal.id) ? "Bericht verfügbar" : "Unbekannt"}</td></tr>`).join("") || `<tr><td colspan="4">Keine fremden Welten im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
   <section class="panel galaxy-flight-panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenbewegungen</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section>
   <section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Expeditionen & Kolonisierung</h2><span>NEUTRALE ZIELE</span></div>${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
 }
@@ -785,6 +793,9 @@ function render() {
   if (!state) return;
   resourceTicker();
   $("#commander-name").textContent = state.commander;
+  const planetSwitch = $("#planet-switch");
+  if (document.activeElement !== planetSwitch) planetSwitch.innerHTML = state.planets.map(planet => `<option value="${escapeHtml(planet.id)}" ${planet.id === activePlanet().id ? "selected" : ""}>${escapeHtml(planet.name)}</option>`).join("");
+  $(".planet-card strong").textContent = activePlanet().name;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
   const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, galaxy: galaxyView, log: logView };
   content.innerHTML = views[activeView]();
@@ -919,6 +930,15 @@ $$('[data-auth-mode]').forEach((button) => button.addEventListener("click", () =
 $("#start-button").addEventListener("click", () => enterGame($("#commander-input").value, $("#password-input").value));
 $("#password-input").addEventListener("keydown", (event) => { if (event.key === "Enter") enterGame($("#commander-input").value, event.currentTarget.value); });
 $("#save-button").addEventListener("click", () => { if (!actionBusy) save(); });
+$("#planet-switch").addEventListener("change", async (event) => {
+  if (isSaving || actionBusy) { event.target.value = activePlanet().id; return; }
+  state.activePlanetId = event.target.value;
+  galaxyOffset = { x: 0, y: 0 };
+  selectedSignalId = null;
+  await save({ quiet: true });
+  await fetchGalaxy({ force: true });
+  render();
+});
 $("#logout-button").addEventListener("click", () => { if (!actionBusy && !isSaving) logout(); });
 
 setGateMode("register");
