@@ -1,3 +1,4 @@
+import { FLEET, DEFENSE } from "./units.js";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const content = $("#content");
@@ -143,6 +144,17 @@ const SHIPS = {
   },
 };
 
+for (const [key,item] of Object.entries(FLEET)) if (item.name) SHIPS[key] = {
+  ...item, icon:key.includes("Transport") ? "▱" : "➤", image:key.includes("Transport") ? "/assets/cargo-drone.svg" : "/assets/interceptor.svg",
+  description:key.includes("Transport") ? "Frachtkapazität für planetare Raubzüge." : "Schweres Kampfschiff für Angriffe und die Heimatverteidigung.",
+  stats:`Stärke ${item.power} · Fracht ${item.cargo}`,
+  requires:s=>[requirement(s.buildings.shipyard>=item.level,`Orbitalwerft Stufe ${item.level}`),requirement(s.research.combustionDrive>=Math.ceil(item.level/2),`Verbrennungsantrieb Stufe ${Math.ceil(item.level/2)}`)]
+};
+for (const [key,item] of Object.entries(DEFENSE)) SHIPS[key] = {
+  ...item, isDefense:true, icon:"⌁",image:key==="teslaCoil" ? "/assets/solar-array.svg" : "/assets/sensor-array.svg",
+  stats:`Abwehr ${item.power}${item.antiSpy ? ` · Sondenabwehr +${Math.round(item.antiSpy*100)} Prozentpunkte` : ""}`,
+  requires:s=>[requirement(s.buildings.shipyard>=item.level,`Orbitalwerft Stufe ${item.level}`),requirement(s.research.energyTech>=item.level,`Energietechnik Stufe ${item.level}`)]
+};
 const MISSIONS = {
   derelict: {
     id: "derelict", name: "Verlassene Raffinerie", coordinates: "G 02 · Sektor 17 · Orbit 07", kind: "Bergung", minutes: 0.45,
@@ -177,6 +189,9 @@ let galaxyIntel = [];
 let galaxyOrigin = { x: 50, y: 50 };
 let galaxyRadius = 14;
 let galaxyZoom = 1;
+let raidSelection = {};
+let mapGesture = null;
+let suppressMapClickUntil = 0;
 let galaxyOffset = { x: 0, y: 0 };
 let selectedSignalId = null;
 let galaxyError = "";
@@ -259,6 +274,8 @@ function createColony() {
   };
 }
 function ensureStateShape() {
+  for (const key of Object.keys(SHIPS)) if (!SHIPS[key].isDefense) state.ships[key] ??= 0;
+  for (const planet of state.planets || []) planet.defenses ??= {};
   state.research.deepSpaceSensors ??= 0;
   state.ships.spyProbe ??= 0;
   state.spyReports ??= [];
@@ -377,7 +394,11 @@ function resolveQueues(at) {
       state.research[queue.key] = queue.targetLevel;
       addLog("system", `${RESEARCH[queue.key].name} auf Stufe ${queue.targetLevel} erforscht.`);
     } else {
-      state.ships[queue.key] += queue.amount;
+      if (SHIPS[queue.key].isDefense) {
+        const planet = state.planets.find(p=>p.id===queue.planetId) || activePlanet();
+        planet.defenses ??= {};
+        planet.defenses[queue.key] = (planet.defenses[queue.key] || 0) + queue.amount;
+      } else state.ships[queue.key] += queue.amount;
       addLog("system", `${queue.amount}× ${SHIPS[queue.key].name} aus der Orbitalwerft übernommen.`);
     }
     state.queues[kind] = null;
@@ -483,7 +504,7 @@ async function fetchLeaderboard() {
 }
 
 async function fetchGalaxy({ force = false } = {}) {
-  if (!state || galaxyLoading || (!force && Date.now() - lastGalaxyFetch < 10_000)) return;
+  if (!state || mapGesture || galaxyLoading || (!force && Date.now() - lastGalaxyFetch < 10_000)) return;
   galaxyLoading = true;
   lastGalaxyFetch = Date.now();
   try {
@@ -497,7 +518,7 @@ async function fetchGalaxy({ force = false } = {}) {
   } catch { galaxyError = "Sensorverbindung unterbrochen. Erneut scannen.";
   } finally {
     galaxyLoading = false;
-    if (state && activeView === "galaxy") render();
+    if (state && activeView === "galaxy" && !document.activeElement?.matches("[data-fleet-key]")) render();
   }
 }
 
@@ -506,11 +527,10 @@ async function raidTarget(targetId) {
   actionBusy = true;
   if (!await save({ quiet: true })) { actionBusy = false; return; }
   synchronize();
-  const cargoDrone = Math.min(5, Math.max(0, Number(state.ships.cargoDrone) || 0));
-  const interceptor = Math.min(3, Math.max(0, Number(state.ships.interceptor) || 0));
-  if (!cargoDrone && !interceptor) {
+  const fleet = Object.fromEntries(Object.keys(FLEET).map(key=>[key,Math.min(state.ships[key]||0,Math.max(0,Math.floor(Number(raidSelection[key])||0)))]));
+  if (!Object.values(fleet).some(Boolean)) {
     actionBusy = false;
-    toast("Für einen Raubzug brauchst du Frachtdrohnen oder Interzeptoren.", true);
+    toast("Wähle zuerst deine Einsatzflotte im Zielfenster.", true);
     return;
   }
   try {
@@ -518,7 +538,7 @@ async function raidTarget(targetId) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ targetId, fleet: { cargoDrone, interceptor } }),
+      body: JSON.stringify({ targetId, fleet }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Raubzug konnte nicht ausgeführt werden.");
@@ -722,11 +742,14 @@ function shipCard(key, ship) {
   const disabled = locked || !affordable || Boolean(queue);
   const action = queue?.key === key ? "Im Bau" : queue ? "Werft belegt" : locked ? "Voraussetzung fehlt" : affordable ? "Einheit bauen" : "Rohstoffe fehlen";
   const needs = ship.requires(state).filter((item) => !item.ok).map((item) => item.text);
-  return `<article class="entity-card entity-card--ship entity-card--${key} ${locked ? "locked" : ""}"><img class="entity-art" src="${ship.image}" alt="Illustration ${escapeHtml(ship.name)}"><div class="entity-icon">${ship.icon}</div><div class="entity-info"><h2>${ship.name} <span class="badge">verfügbar: ${state.ships[key]}</span></h2><p>${ship.description}</p><div class="meta"><span>${ship.stats}</span><span>Werftzeit: ${formatDuration(shipTime(ship.cost))}</span></div>${needs.length ? `<div class="unlock-note">${needs.join(" · ")}</div>` : ""}</div><div class="entity-action"><p class="cost">${costMarkup(ship.cost)}</p><button class="${locked ? "secondary-button" : "primary-button"}" data-ship="${key}" ${disabled ? "disabled" : ""}>${action}</button></div></article>`;
+  return `<article class="entity-card entity-card--ship entity-card--${key} ${locked ? "locked" : ""}"><img class="entity-art" src="${ship.image}" alt="Illustration ${escapeHtml(ship.name)}"><div class="entity-icon">${ship.icon}</div><div class="entity-info"><h2>${ship.name} <span class="badge">verfügbar: ${ship.isDefense ? (activePlanet().defenses?.[key] || 0) : state.ships[key]}</span></h2><p>${ship.description}</p><div class="meta"><span>${ship.stats}</span><span>Werftzeit: ${formatDuration(shipTime(ship.cost))}</span></div>${needs.length ? `<div class="unlock-note">${needs.join(" · ")}</div>` : ""}</div><div class="entity-action"><p class="cost">${costMarkup(ship.cost)}</p><button class="${locked ? "secondary-button" : "primary-button"}" data-ship="${key}" ${disabled ? "disabled" : ""}>${action}</button></div></article>`;
+}
+function defenseView() {
+  return `<section class="view-heading"><h1>Planetare Verteidigung · ${escapeHtml(activePlanet().name)}</h1><p>Stationäre Anlagen bleiben auf dieser Welt. Sie verstärken die Abwehr bei Angriffen; Störsender und Raketenabwehr erhöhen das Sonden-Abfangrisiko.</p></section><section class="entity-list">${Object.entries(SHIPS).filter(([,s])=>s.isDefense).map(([key,s])=>shipCard(key,s)).join("")}</section>`;
 }
 function shipyardView() {
   const deployed = state.missions.reduce((total, mission) => total + Object.values(mission.fleet).reduce((sum, count) => sum + count, 0), 0);
-  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Die Werft fertigt eine Einheit nach der anderen. Ausgesandte Schiffe stehen erst nach ihrem Rückflug wieder zur Verfügung.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section><section class="entity-list">${Object.entries(SHIPS).map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Interzeptoren liefern 45 Kampfstärke, Frachtdrohnen 4. Avionik erhöht die Einsatzstärke um 8 % pro Stufe.</span></div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Die Werft fertigt eine Einheit nach der anderen. Ausgesandte Schiffe stehen erst nach ihrem Rückflug wieder zur Verfügung.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section><section class="entity-list">${Object.entries(SHIPS).filter(([,ship])=>!ship.isDefense).map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
 }
 function missionStatusMarkup() {
   if (!state.missions.length) return `<div class="empty-state"><strong>Keine Flotten unterwegs</strong>Baue eine Frachtdrohne und beginne deine erste Bergung.</div>`;
@@ -765,14 +788,14 @@ function rankingView() {
 }
 function economyView() {
   const rates = production();
-  return tablePanel("Wirtschaft", ["Rohstoff", "Vorrat", "Produktion / Stunde", "Lagerkapazität"], Object.keys(RESOURCE_LABELS).map(key => `<tr><td>${RESOURCE_LABELS[key]}</td><td>${formatNumber(state.resources[key])}</td><td>+${formatNumber(rates[key])}</td><td>${formatNumber(storageCap(key))}</td></tr>`)) + `<p class="view-note">Energieeffizienz: ${Math.round(energyStats().efficiency * 100)} %. Wirtschaft und Flottenbestand werden derzeit zwischen deinen Planeten geteilt.</p>`;
+  return tablePanel("Wirtschaft", ["Rohstoff", "Vorrat", "Produktion / Stunde", "Lagerkapazität"], Object.keys(RESOURCE_LABELS).map(key => `<tr><td>${RESOURCE_LABELS[key]}</td><td>${formatNumber(state.resources[key])}</td><td>+${formatNumber(rates[key])}</td><td>${formatNumber(storageCap(key))}</td></tr>`)) + `<p class="view-note">Energieeffizienz: ${Math.round(energyStats().efficiency * 100)} %. Wirtschaft und Schiffe werden derzeit zwischen deinen Planeten geteilt; Verteidigungsanlagen sind planetengebunden.</p>`;
 }
 function statisticsView() {
   const categories = [["Gebäude", Object.values(state.buildings).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
   return tablePanel("Spielerstatistik", ["Bereich", "Punkte"], categories.map(([name,value]) => `<tr><td>${name}</td><td>${formatNumber(value)}</td></tr>`));
 }
 function fleetsView() {
-  return tablePanel("Flottenbefehle", ["Schiff", "Verfügbar"], Object.entries(SHIPS).map(([key,item]) => `<tr><td>${item.name}</td><td>${formatNumber(state.ships[key])}</td></tr>`)) + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section><p class="view-note">Spionage, Angriffe und gezielte Besiedlung: Ziel im Sonnensystem auswählen.</p>`;
+  return tablePanel("Flottenbefehle", ["Schiff", "Verfügbar"], Object.entries(SHIPS).filter(([,item]) => !item.isDefense).map(([key,item]) => `<tr><td>${item.name}</td><td>${formatNumber(state.ships[key])}</td></tr>`)) + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section><p class="view-note">Spionage, Angriffe und gezielte Besiedlung: Ziel im Sonnensystem auswählen.</p>`;
 }
 function techtreeView() {
   return tablePanel("Technologiebaum", ["Technologie / Einheit", "Voraussetzungen", "Status"], [...Object.values(BUILDINGS), ...Object.values(RESEARCH), ...Object.values(SHIPS)].map(item => {
@@ -786,6 +809,9 @@ function helpView() {
 content.addEventListener("error", (event) => {
   if (event.target.tagName === "IMG" && event.target.src.startsWith("https://")) event.target.src = "/assets/research-lab.svg";
 }, true);
+function fleetSelector() {
+  return `<details class="fleet-selector" open><summary>Einsatzflotte zusammenstellen</summary>${Object.entries(FLEET).map(([key,item])=>`<label><span>${SHIPS[key].name} <small>(${state.ships[key]||0} verfügbar)</small></span><input type="number" inputmode="numeric" min="0" max="${state.ships[key]||0}" step="1" value="${raidSelection[key]||0}" data-fleet-key="${key}" aria-label="${SHIPS[key].name} einsetzen"></label>`).join("")}<p>Nur die gewählten Schiffe starten. PvP-Angriffe werden derzeit sofort aufgelöst.</p></details>`;
+}
 function galaxyInspector() {
   const signal = galaxyIntel.find((contact) => contact.id === selectedSignalId);
   if (signal?.free) return `<aside class="galaxy-inspector"><span class="eyebrow">FREIE WELT · ${galaxyCoordinates(signal.position)}</span><h2>${escapeHtml(signal.signature)}</h2><p>Unbesiedelt · ${signal.distance} Sektoren entfernt. Größe und Beschaffenheit werden erst bei der Besiedlung bekannt.</p><p>Ein Kolonieschiff wird verbraucht. Die Besiedlung wird derzeit sofort abgeschlossen.</p><button class="primary-button" data-colonize="${escapeHtml(signal.id)}" ${!state.ships.colonyShip || actionBusy ? "disabled" : ""}>${state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button><p>Spionage und Angriffe sind nur bei besetzten Welten verfügbar.</p></aside>`;
@@ -793,8 +819,8 @@ function galaxyInspector() {
   const report = currentReport(signal.id);
   const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
   return `<aside class="galaxy-inspector"><span class="eyebrow">ZIEL ERFASST · ${galaxyCoordinates(signal.position)}</span><h2>${escapeHtml(signal.signature)}</h2><p>${signal.distance} Sektoren entfernt · fremde Welt</p>
-  <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(signal.id)}" ${!report || actionBusy || !(state.ships.cargoDrone || state.ships.interceptor) ? "disabled" : ""}>Angreifen · bis zu 5 Frachter + 3 Jäger</button></div>
-  ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/4</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString("de-DE")} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
+  <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(signal.id)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(signal.id)}" ${!report || actionBusy || !Object.keys(FLEET).some(key=>state.ships[key]>0) ? "disabled" : ""}>Ausgewählte Flotte angreifen lassen</button></div>${fleetSelector()}
+  ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/4</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString("de-DE")} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}${reportSection("Planetare Abwehr", report.defenses, DEFENSE)}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
   </aside>`;
 }
 function galaxyView() {
@@ -815,7 +841,7 @@ function galaxyView() {
   return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Grau: unerforscht · Grün: aktive Welt · Rot: ausgewähltes Ziel</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
   <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="home">Heimat zentrieren</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
-  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SIGNALE<small>Jeden weißen Stern anklicken: freie Welt besiedeln oder besetzte Welt aufklären.</small></div></section>${galaxyInspector()}</div>
+  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SIGNALE<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Weißen Stern für Aktionen anklicken.</small></div></section>${galaxyInspector()}</div>
   <section class="contact-console"><div class="panel-title"><h2>Erfasste Welten</h2><span>${galaxyIntel.length} KONTAKTE</span></div><table><thead><tr><th>Planet</th><th>X : Y</th><th>Entfernung</th><th>Aufklärung</th></tr></thead><tbody>${galaxyIntel.map(signal => `<tr class="${signal.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(signal.id)}">${escapeHtml(signal.signature)}</button></td><td>${galaxyCoordinates(signal.position)}</td><td>${signal.distance} Sektoren</td><td>${signal.free ? "Frei · besiedelbar" : currentReport(signal.id) ? "Bericht verfügbar" : "Besetzt"}</td></tr>`).join("") || `<tr><td colspan="4">Keine fremden Welten im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
   <section class="panel galaxy-flight-panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenbewegungen</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section>
   <section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Expeditionen & Kolonisierung</h2><span>NEUTRALE ZIELE</span></div>${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
@@ -844,7 +870,7 @@ function render() {
   if (document.activeElement !== planetSwitch) planetSwitch.innerHTML = state.planets.map(planet => `<option value="${escapeHtml(planet.id)}" ${planet.id === activePlanet().id ? "selected" : ""}>${escapeHtml(planet.name)}</option>`).join("");
   $(".planet-card strong").textContent = activePlanet().name;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
-  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, galaxy: galaxyView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
+  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   content.innerHTML = views[activeView]();
 }
 
@@ -893,7 +919,7 @@ function startShip(key) {
   if (state.queues.ship || ship.requires(state).some((item) => !item.ok) || !hasResources(ship.cost)) return;
   pay(ship.cost);
   const startedAt = Date.now();
-  state.queues.ship = { key, amount: 1, startedAt, completesAt: startedAt + shipTime(ship.cost) };
+  state.queues.ship = { key, amount: 1, planetId: activePlanet().id, startedAt, completesAt: startedAt + shipTime(ship.cost) };
   addLog("system", `${ship.name} in der Orbitalwerft in Auftrag gegeben.`);
   toast(`${ship.name} wird montiert.`);
   render();
@@ -934,10 +960,52 @@ $("#nav").addEventListener("click", (event) => {
   if (["overview", "ranking"].includes(activeView)) fetchLeaderboard();
   if (activeView === "galaxy") fetchGalaxy({ force: true });
 });
+content.addEventListener("input", event => {
+  if (event.target.dataset.fleetKey) raidSelection[event.target.dataset.fleetKey] = Math.max(0,Math.min(Number(event.target.max),Math.floor(Number(event.target.value)||0)));
+});
+content.addEventListener("pointerdown", event => {
+  const map = event.target.closest(".universe-map");
+  if (!map || event.button !== 0) return;
+  mapGesture = { x:event.clientX,y:event.clientY,offset:{...galaxyOffset},size:map.getBoundingClientRect().width,moved:false };
+});
+content.addEventListener("pointermove", event => {
+  if (!mapGesture) return;
+  const dx=event.clientX-mapGesture.x, dy=event.clientY-mapGesture.y;
+  if (Math.hypot(dx,dy)<5 && !mapGesture.moved) return;
+  mapGesture.moved = true;
+  content.setPointerCapture(event.pointerId);
+  galaxyOffset = {x:Math.max(-100,Math.min(100,mapGesture.offset.x-dx/mapGesture.size*100/galaxyZoom)),y:Math.max(-100,Math.min(100,mapGesture.offset.y-dy/mapGesture.size*100/galaxyZoom))};
+  render();
+});
+const finishMapGesture = event => {
+  if (!mapGesture) return;
+  if (mapGesture.moved) suppressMapClickUntil=Date.now()+300;
+  mapGesture=null;
+  if (content.hasPointerCapture(event.pointerId)) content.releasePointerCapture(event.pointerId);
+};
+content.addEventListener("pointerup",finishMapGesture);
+content.addEventListener("pointercancel",finishMapGesture);
+content.addEventListener("pointerleave",event=>{ if(mapGesture && !mapGesture.moved) mapGesture=null; });
+content.addEventListener("wheel", event => {
+  const map=event.target.closest(".universe-map");
+  if (!map) return;
+  event.preventDefault();
+  const rect=map.getBoundingClientRect(), oldSize=100/galaxyZoom;
+  galaxyZoom=Math.max(.5,Math.min(5,galaxyZoom*(event.deltaY>0?.85:1.18)));
+  const diff=oldSize-100/galaxyZoom;
+  galaxyOffset.x+=((event.clientX-rect.left)/rect.width-.5)*diff;
+  galaxyOffset.y+=((event.clientY-rect.top)/rect.height-.5)*diff;
+  render();
+},{passive:false});
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
-  if (button.dataset.signalId) { selectedSignalId = button.dataset.signalId; render(); return; }
+  if (button.dataset.signalId) {
+    if (Date.now() < suppressMapClickUntil) return;
+    selectedSignalId = button.dataset.signalId;
+    raidSelection = {};
+    render(); return;
+  }
   if (button.dataset.colonize) { colonizeTarget(button.dataset.colonize); return; }
   if (actionBusy || isSaving) { toast("Speicherung läuft – bitte gleich erneut versuchen."); return; }
   if (button.dataset.spyTarget) { spyTarget(button.dataset.spyTarget, Number(button.dataset.probes)); return; }
