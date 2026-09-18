@@ -18,6 +18,8 @@ const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env
 const sessions = new Map();
 const sessionLifetime = 1000 * 60 * 60 * 24 * 30;
 const LEVEL_CAP = 100;
+const GALAXY_SPAN = 220;
+const FRONTIER_SITE_COUNT = 420;
 const RESOURCE_KEYS = ["metal", "crystal", "tritium"];
 let mutationChain = Promise.resolve();
 function mutate(action) {
@@ -185,16 +187,15 @@ function activeGalaxyAccount(account) {
 function signalId(account) { return `${account.id}:${primaryPlanet(account).id}`; }
 function galaxyPosition(account) {
   const planet = primaryPlanet(account);
-    const site = frontierSites.find(site => site.id === planet.id);
+  const site = frontierSites.find(site => site.id === planet.id);
   if (site) {
     if (planet.position) return planet.position;
-    const i = Number(planet.id.slice(9));
-    return { x:5+(i%10)*9+(i*7%5), y:5+Math.floor(i/10)*9+(i*3%5) };
+    return { ...site.position };
   }
   const seed = stableHash(`${account.id}:${planet.id || "home"}`);
   return {
-    x: 5 + seed % 91,
-    y: 5 + Math.floor(seed / 101) % 91,
+    x: 8 + seed % (GALAXY_SPAN - 16),
+    y: 8 + Math.floor(seed / 211) % (GALAXY_SPAN - 16),
   };
 }
 function galaxyDistance(left, right) {
@@ -204,11 +205,11 @@ const frontierSites = (() => {
   let seed = 732194;
   const random = () => { seed = (Math.imul(seed,1664525)+1013904223) >>> 0; return seed/4294967296; };
   const sites = [];
-  for (let i=0;i<140;i++) {
+  for (let i=0;i<FRONTIER_SITE_COUNT;i++) {
     let position;
     for (let attempt=0;attempt<200;attempt++) {
-      position = {x:3+random()*94,y:3+random()*94};
-      if (sites.every(s=>Math.hypot(s.position.x-position.x,s.position.y-position.y)>3)) break;
+      position = {x:4+random()*(GALAXY_SPAN-8),y:4+random()*(GALAXY_SPAN-8)};
+      if (sites.every(s=>Math.hypot(s.position.x-position.x,s.position.y-position.y)>4)) break;
     }
     sites.push({id:`frontier-${i}`,signature:`Kepler ${i+1}`,position,free:true});
   }
@@ -255,7 +256,7 @@ async function colonizeSite(key, targetId) {
 }
 function sensorRange(account) {
   const level = asWholeNumber(account.state?.research?.deepSpaceSensors);
-  return Math.min(150, 14 + level * 1.36);
+  return Math.min(340, 14 + level * 3.26);
 }
 function targetIsVisible(attacker, defender) {
   return galaxyDistance(galaxyPosition(attacker), galaxyPosition(defender)) <= sensorRange(attacker);
@@ -276,11 +277,11 @@ function publicGalaxyRecord(account, observer = null) {
   };
 }
 function galaxySystems(contacts, observer) {
-  const cellSize = 18;
+  const cellSize = 16;
   const buckets = new Map();
   for (const contact of contacts) {
-    const cellX = Math.floor(Math.max(0, Math.min(99.999, contact.position.x)) / cellSize);
-    const cellY = Math.floor(Math.max(0, Math.min(99.999, contact.position.y)) / cellSize);
+    const cellX = Math.floor(Math.max(0, Math.min(GALAXY_SPAN - .001, contact.position.x)) / cellSize);
+    const cellY = Math.floor(Math.max(0, Math.min(GALAXY_SPAN - .001, contact.position.y)) / cellSize);
     const key = `${cellX}-${cellY}`;
     if (!buckets.has(key)) buckets.set(key, { cellX, cellY, contacts: [] });
     buckets.get(key).contacts.push(contact);
@@ -296,8 +297,8 @@ function galaxySystems(contacts, observer) {
       const jitterX = (seed % 801) / 100 - 4;
       const jitterY = (Math.floor(seed / 809) % 801) / 100 - 4;
       const position = {
-        x: Math.max(3, Math.min(97, bucket.cellX * cellSize + cellSize / 2 + jitterX)),
-        y: Math.max(3, Math.min(97, bucket.cellY * cellSize + cellSize / 2 + jitterY)),
+        x: Math.max(3, Math.min(GALAXY_SPAN - 3, bucket.cellX * cellSize + cellSize / 2 + jitterX)),
+        y: Math.max(3, Math.min(GALAXY_SPAN - 3, bucket.cellY * cellSize + cellSize / 2 + jitterY)),
       };
       const slots = Array.from({ length: 13 }, (_, index) => ({ position: index + 1, empty: true }));
       for (const contact of chunk) {
@@ -664,7 +665,7 @@ const server = createServer(async (request, response) => {
         .sort((a, b) => a.distance - b.distance).slice(0, 200);
       const claimed = new Set(accounts.flatMap(a => a.state.planets.map(p => p.id)));
       contacts.push(...frontierSites.filter(site => !claimed.has(site.id)).map(site => ({ ...site, distance: galaxyDistance(galaxyPosition(observer), site.position) })).filter(site => site.distance <= sensorRange(observer)));
-      return json(response, 200, { contacts, systems: galaxySystems(contacts, observer), origin: galaxyPosition(observer), radius: sensorRange(observer), updatedAt: Date.now() });
+      return json(response, 200, { contacts, systems: galaxySystems(contacts, observer), origin: galaxyPosition(observer), radius: sensorRange(observer), span: GALAXY_SPAN, updatedAt: Date.now() });
     }
     if (request.method === "POST" && url.pathname === "/api/colonize") {
       const current = await authenticatedAccount(request);
