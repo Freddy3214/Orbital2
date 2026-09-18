@@ -233,6 +233,9 @@ function formatDuration(milliseconds) {
 function formatClock(timestamp) {
   return new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
 }
+function formatDateTime(timestamp) {
+  return new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+}
 function getCost(config, targetLevel) {
   const cost = {};
   for (const resource of Object.keys(RESOURCE_LABELS)) {
@@ -322,6 +325,19 @@ function ensureStateShape() {
   if (homeworld) homeworld.usedFields = calculatedHomeFields();
 }
 function buildingQueue() { return Array.isArray(state?.queues?.building) ? state.queues.building : []; }
+function constructionSpeedFactor() {
+  return 1 + Math.min(100, state.buildings.roboticsFactory || 0) * .08 + Math.min(100, state.research.constructionEngineering || 0) * .12;
+}
+function buildingQueueSchedule(now = Date.now()) {
+  let cursor = now;
+  return buildingQueue().map((queue, index) => {
+    const duration = buildTime(queue.cost || getCost(BUILDINGS[queue.key], queue.targetLevel), queue.targetLevel);
+    const start = index === 0 && queue.startedAt ? queue.startedAt : cursor;
+    const end = index === 0 && queue.completesAt ? queue.completesAt : Math.max(cursor, start) + duration;
+    cursor = Math.max(now, end);
+    return { queue, index, start, end, duration };
+  });
+}
 function projectedBuildingLevel(key) { return (state.buildings[key] || 0) + buildingQueue().filter((item) => item.key === key).length; }
 function projectedBuildingState() {
   const projected = { ...state, buildings: { ...state.buildings } };
@@ -664,21 +680,22 @@ function resourceTicker() {
   $("#resource-ticker").innerHTML = blocks.join("");
 }
 
-function queueRows() {
+function queueRows(buildingsOnly = false) {
+  const now = Date.now();
   const queued = [
-    ...buildingQueue().map((queue, index) => ({ kind: "building", queue, index })),
-    ...["research", "ship"].filter((kind) => state.queues[kind]).map((kind) => ({ kind, queue: state.queues[kind], index: 0 })),
+    ...buildingQueueSchedule(now).map(({ queue, index, start, end, duration }) => ({ kind: "building", queue, index, start, end, duration })),
+    ...(buildingsOnly ? [] : ["research", "ship"].filter((kind) => state.queues[kind]).map((kind) => ({ kind, queue: state.queues[kind], index: 0 }))),
   ];
   if (!queued.length) return `<div class="empty-state"><strong>Keine aktiven Aufträge</strong>Ressourcen werden weiter erzeugt, während du planst.</div>`;
-  const now = Date.now();
-  return `<div class="queue-stack">${queued.map(({ kind, queue, index }) => {
+  return `<div class="queue-stack">${queued.map(({ kind, queue, index, start, end, duration }) => {
     const config = kind === "building" ? BUILDINGS[queue.key] : kind === "research" ? RESEARCH[queue.key] : SHIPS[queue.key];
     const waiting = kind === "building" && index > 0;
-    const total = (queue.completesAt || now) - (queue.startedAt || now);
+    const total = kind === "building" ? duration : (queue.completesAt || now) - (queue.startedAt || now);
     const percent = waiting ? 0 : Math.max(0, Math.min(100, ((now - queue.startedAt) / total) * 100));
     const label = kind === "building" ? `Stufe ${queue.targetLevel}` : kind === "research" ? `Stufe ${queue.targetLevel}` : `${queue.amount} Einheit`;
-    const timing = waiting ? `Position ${index + 1} · wartet` : formatDuration(queue.completesAt - now);
-    return `<div class="queue-row ${waiting ? "waiting" : ""}"><div class="queue-top"><strong>${escapeHtml(config.name)} <span>· ${label}</span></strong><span>${timing}</span></div><div class="progress"><i style="width:${percent}%"></i></div></div>`;
+    const effectiveEnd = kind === "building" ? end : queue.completesAt;
+    const timing = waiting ? `Start ${formatDateTime(start)} · Ende ${formatDateTime(end)}` : `${formatDuration(effectiveEnd - now)} · Ende ${formatDateTime(effectiveEnd)}`;
+    return `<div class="queue-row ${waiting ? "waiting" : ""}"><div class="queue-top"><strong>${escapeHtml(config.name)} <span>· ${label}${waiting ? ` · Position ${index + 1}` : ""}</span></strong><span>${timing}</span></div><div class="progress"><i style="width:${percent}%"></i></div></div>`;
   }).join("")}</div>`;
 }
 
@@ -686,11 +703,12 @@ function overviewView() {
   const energy = energyStats();
   const rate = production();
   const planet = activePlanet();
+  const activeOrders = buildingQueue().length + (state.queues.research ? 1 : 0) + (state.queues.ship ? 1 : 0);
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1><p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Dein nächster Meilenstein ist die automatisierte Industrie.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
     <div class="grid overview-grid">
       <section class="panel hero-panel">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} ist ${planetSizeLabel(planet.fields).toLowerCase()}.</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(state.buildings).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length}</strong></div></div></section>
-      <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${buildingQueue().length ? `${buildingQueue().length} BAU` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
+      <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
       <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Industrieprotokoll</h2><span>PRO STUNDE</span></div><div class="stat-list"><div class="stat-line"><span>Metallförderung</span><strong>+${formatNumber(rate.metal)}</strong></div><div class="stat-line"><span>Kristallförderung</span><strong>+${formatNumber(rate.crystal)}</strong></div><div class="stat-line"><span>Tritiumproduktion</span><strong>+${formatNumber(rate.tritium)}</strong></div><div class="stat-line"><span>Mineneffizienz</span><strong class="${energy.efficiency === 1 ? "energy-good" : "energy-warning"}">${formatNumber(energy.efficiency * 100)}%</strong></div></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Nächste Upgrades</h2><span>ROUTE</span></div>${upgradePathMarkup()}</div></section>
@@ -756,7 +774,9 @@ function buildingsView() {
   const infrastructure = Object.entries(BUILDINGS).filter(([, item]) => item.group === "Infrastruktur");
   const projected = projectedBuildingState();
   const makeGroup = (title, entries) => `<section class="entity-list"><div class="panel-title"><h2>${title}</h2><span>${title === "Ökonomie" ? "PRODUKTION UND ENERGIE" : "KOLONIALE SYSTEME"}</span></div>${entries.map(([key, config]) => { const level = state.buildings[key]; const cost = getCost(config, projected.buildings[key] + 1); const requirements = config.requires ? config.requires(projected) : []; return entityCard("build", key, config, level, cost, requirements, "building"); }).join("")}</section>`;
-  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · ${buildingQueue().length} IN BAUREIHE</span></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
+  const schedule = buildingQueueSchedule();
+  const queueEnd = schedule.at(-1)?.end;
+  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · BAUTEMPO ${constructionSpeedFactor().toFixed(2)}×${queueEnd ? ` · FERTIG ${formatDateTime(queueEnd)}` : ""}</span></section><section class="panel queue-planning-panel"><div class="panel-inner"><div class="panel-title"><h2>Baureihe</h2><span>${buildingQueue().length ? `${buildingQueue().length} GEPLANT` : "FREI"}</span></div>${queueRows(true)}</div></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
 }
 function researchView() {
   return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Jedes Laborlevel verkürzt die Laufzeit eines Projekts.</p></div><span class="sector-label">LABOR STUFE ${state.buildings.researchLab}</span></section><section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, level + 1); return entityCard("research", key, config, level, cost, config.requires(state), "research"); }).join("")}</section>`;
