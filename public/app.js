@@ -71,6 +71,18 @@ const BUILDINGS = {
 };
 
 const RESEARCH = {
+  computerTech: {
+    icon: "⌘", image: "/assets/research-lab.svg", name: "Computertechnik", factor: 1.8, base: { metal: 200, crystal: 450, tritium: 100 },
+    description: "Vernetzte Rechenkerne beschleunigen neue Forschungsaufträge auf allen Welten um 8 % pro Stufe.",
+    detail: (level) => `Forschungstempo: +${level * 8}%`,
+    requires: (s) => [requirement(s.buildings.researchLab >= 2, "Forschungslabor Stufe 2"), requirement(s.research.energyTech >= 2, "Energietechnik Stufe 2")],
+  },
+  storageTech: {
+    icon: "▣", image: "/assets/resource-vault.svg", name: "Lagertechnik", factor: 1.75, base: { metal: 400, crystal: 250, tritium: 50 },
+    description: "Verdichtete Lagerzellen erhöhen die Kapazität aller Rohstoffspeicher um 10 % pro Stufe.",
+    detail: (level) => `Lagerkapazität: +${level * 10}%`,
+    requires: (s) => [requirement(s.buildings.researchLab >= 1, "Forschungslabor Stufe 1"), requirement(s.research.energyTech >= 1, "Energietechnik Stufe 1")],
+  },
   deepSpaceSensors: {
     icon: "◎", image: "/assets/sensor-array.svg", name: "Tiefraumsensorik", factor: 1.65, base: { metal: 160, crystal: 240, tritium: 60 },
     description: "Erweitert den sichtbaren Raum und verbessert die Detailtiefe der Spionageberichte.",
@@ -237,6 +249,7 @@ let lastGalaxyFetch = 0;
 let playerSearchResults = [];
 let messageRecipient = "";
 let messageSubject = "";
+let messageBody = "";
 let canGrantTestResources = false;
 
 const PLANET_TYPES = {
@@ -413,7 +426,7 @@ function metalOutput(level) { return Math.floor(30 * level * 1.1 ** level) + 30;
 function crystalOutput(level) { return Math.floor(20 * level * 1.1 ** level) + 15; }
 function tritiumOutput(level) { return Math.floor(10 * level * 1.1 ** level); }
 function energySupply(level) { return Math.floor(20 * level * 1.1 ** level); }
-function storageCap(resource, level = planetBuildings()[`${resource}Storage`]) { return Math.floor(25000 * 1.65 ** level); }
+function storageCap(resource, level = planetBuildings()[`${resource}Storage`]) { return Math.floor(25000 * 1.65 ** level * (1 + (state.research.storageTech || 0) * .1)); }
 function energyStats(planet = activePlanet()) {
   const b = planetBuildings(planet);
   const supply = energySupply(b.solarPlant) * (1 + state.research.energyTech * .05);
@@ -445,7 +458,7 @@ function buildTime(cost, targetLevel = 1, planet = activePlanet()) {
   const speed = 1 + robotics * .08 + logistics * .12;
   return Math.max(15000, (rawSeconds / speed) * 1000);
 }
-function researchTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + planetBuildings().researchLab))) * 1000); }
+function researchTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + planetBuildings().researchLab) * (1 + (state.research.computerTech || 0) * .08))) * 1000); }
 function shipTime(ship, planet = activePlanet()) {
   const cost = ship.cost;
   const baseTime = ((cost.metal + cost.crystal + cost.tritium) / (105 * (1 + planetBuildings(planet).shipyard))) * 1000;
@@ -582,8 +595,10 @@ async function save({ quiet = false } = {}) {
       const latest = await fetch("/api/state");
       if (!latest.ok) throw new Error("Synchronisierung fehlgeschlagen");
       const knownNotificationIds = new Set((state.notifications || []).map((notice) => notice.id));
+      const readIds = new Set([...(state.messages || []), ...(state.notifications || [])].filter(item => item.read).map(item => item.id));
       state = (await latest.json()).state;
       ensureStateShape();
+      for (const item of [...state.messages, ...state.notifications]) if (readIds.has(item.id)) item.read = true;
       const newest = state.notifications.find((notice) => !knownNotificationIds.has(notice.id));
       toast(newest ? `${newest.title}: ${newest.text}` : "Neue Ereignisse eingetroffen. Spielstand synchronisiert.", newest?.priority === "high");
       render();
@@ -739,6 +754,9 @@ async function logout() {
   await save({ quiet: true });
   try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch { /* Local UI can still close the session. */ }
   state = null;
+  messageRecipient = "";
+  messageSubject = "";
+  messageBody = "";
   $("#app").classList.add("is-hidden");
   $("#commander-gate").classList.remove("hidden");
   $("#password-input").value = "";
@@ -778,9 +796,10 @@ function queueRows(buildingsOnly = false) {
 
 function notificationMarkup() {
   const notices = (state.notifications || []).slice(0, 6);
+  const unreadNotices = (state.notifications || []).filter(notice => !notice.read).length;
   if (!notices.length) return `<div class="empty-state"><strong>Keine neuen Warnungen</strong>Sensorik und Ereignisprotokoll überwachen deinen Sektor.</div>`;
   const icons = { scan: "◉", combat: "⚠", mission: "↗", system: "◎" };
-  return `<div class="log-list notification-list">${notices.map((notice) => `<article class="log-row ${escapeHtml(notice.kind || "system")} ${notice.priority === "high" ? "notification-high" : ""}"><time>${new Date(notice.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</time><span><b>${icons[notice.kind] || "◎"} ${escapeHtml(notice.title || "Meldung")}</b><small>${escapeHtml(notice.text || "")}</small></span></article>`).join("")}</div>`;
+  return `<p>${unreadNotices ? `${unreadNotices} neue Meldungen · im Postfach lesen` : "Alle Meldungen gelesen"}</p><div class="log-list notification-list">${notices.map((notice) => `<article class="log-row ${escapeHtml(notice.kind || "system")} ${notice.priority === "high" && !notice.read ? "notification-high" : ""}"><time>${new Date(notice.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</time><span><b>${icons[notice.kind] || "◎"} ${escapeHtml(notice.title || "Meldung")} · ${notice.read ? "Gelesen" : "Neu"}</b><small>${escapeHtml(notice.text || "")}</small></span></article>`).join("")}</div>`;
 }
 
 function overviewView() {
@@ -1087,6 +1106,7 @@ async function sendPlayerMessage(form) {
     ensureStateShape();
     messageRecipient = "";
     messageSubject = "";
+    messageBody = "";
     toast(`Nachricht an ${recipient} gesendet.`);
     render();
   } catch (error) { toast(error.message || "Nachricht konnte nicht gesendet werden.", true);
@@ -1094,6 +1114,13 @@ async function sendPlayerMessage(form) {
 }
 function render() {
   if (!state) return;
+  if (activeView === "messages" && document.visibilityState !== "hidden") {
+    let changed = false;
+    for (const item of [...state.messages.filter(message => message.direction === "inbound"), ...state.notifications]) {
+      if (!item.read) { item.read = true; changed = true; }
+    }
+    if (changed) { clearTimeout(saveTimer); saveTimer = setTimeout(() => save({ quiet: true }), 250); }
+  }
   lastFullRender = Date.now();
   resourceTicker();
   $("#commander-name").textContent = state.commander;
@@ -1105,6 +1132,11 @@ function render() {
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
   const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   content.innerHTML = views[activeView]();
+  const messageField = content.querySelector('#message-compose textarea[name="body"]');
+  if (messageField) messageField.value = messageBody;
+  const unreadCount = state.messages.filter(message => message.direction === "inbound" && !message.read).length;
+  const messageNav = document.querySelector('#nav [data-view="messages"]');
+  if (messageNav) messageNav.innerHTML = `<span>✉</span> Nachrichten${unreadCount ? ` (${unreadCount})` : ""}`;
 }
 
 function startBuilding(key, amount = 1) {
@@ -1208,6 +1240,11 @@ $("#nav").addEventListener("click", (event) => {
   if (activeView === "galaxy") fetchGalaxy({ force: true });
 });
 content.addEventListener("input", event => {
+  if (event.target.closest("#message-compose")) {
+    if (event.target.name === "recipient") messageRecipient = event.target.value;
+    if (event.target.name === "subject") messageSubject = event.target.value;
+    if (event.target.name === "body") messageBody = event.target.value;
+  }
   if (event.target.dataset.fleetKey) raidSelection[event.target.dataset.fleetKey] = Math.max(0,Math.min(Number(event.target.max),Math.floor(Number(event.target.value)||0)));
 });
 content.addEventListener("submit", event => {
