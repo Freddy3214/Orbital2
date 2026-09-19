@@ -213,6 +213,8 @@ let state = null;
 let activeView = "overview";
 let leaderboard = [];
 let saveTimer = null;
+let lastAutoSave = Date.now();
+let lastFullRender = 0;
 let lastLeaderboardFetch = 0;
 let isSaving = false;
 let authMode = "register";
@@ -404,7 +406,7 @@ function planetArtMarkup(planet, className = "") {
 }
 function entityArtMarkup(config) {
   if (config.atlas) return `<span class="entity-art atlas-art" style="--art-image:url('${config.atlas}');--art-ratio:${config.atlasRatio};--art-x:${config.artX};--art-y:${config.artY}" role="img" aria-label="Illustration ${escapeHtml(config.name)}"></span>`;
-  return `<img class="entity-art" src="${config.image}" alt="Illustration ${escapeHtml(config.name)}">`;
+  return `<img class="entity-art" src="${config.image}" alt="Illustration ${escapeHtml(config.name)}" loading="lazy" decoding="async">`;
 }
 
 function metalOutput(level) { return Math.floor(30 * level * 1.1 ** level) + 30; }
@@ -789,7 +791,7 @@ function overviewView() {
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1><p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Dein nächster Meilenstein ist die automatisierte Industrie.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
     <div class="grid overview-grid">
-      <section class="panel hero-panel">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} ist ${planetSizeLabel(planet.fields).toLowerCase()}.</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
+      <section class="panel hero-panel">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
       <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section>
@@ -1092,6 +1094,7 @@ async function sendPlayerMessage(form) {
 }
 function render() {
   if (!state) return;
+  lastFullRender = Date.now();
   resourceTicker();
   $("#commander-name").textContent = state.commander;
   const planetSwitch = $("#planet-switch");
@@ -1353,9 +1356,17 @@ setInterval(() => {
       button.disabled = cooldown > 0 || state.ships.spyProbe < Number(button.dataset.probes);
       if (button.dataset.probes === "1") button.textContent = cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen";
     });
-  } else if (!editingText && !selectingText) render();
-  if (Date.now() % 5_000 < 1300) save({ quiet: true });
+  } else {
+    resourceTicker();
+    const liveCountdownView = ["buildings", "research", "shipyard", "defense", "fleets"].includes(activeView);
+    if (!editingText && !selectingText && (liveCountdownView || Date.now() - lastFullRender >= 5_000)) render();
+  }
+  if (Date.now() - lastAutoSave >= 15_000) {
+    lastAutoSave = Date.now();
+    save({ quiet: true });
+  }
   if (activeView === "overview") fetchLeaderboard();
   if (activeView === "galaxy") fetchGalaxy();
 }, 1000);
-window.addEventListener("beforeunload", () => { if (state) save({ quiet: true }); });
+document.addEventListener("visibilitychange", () => { if (state && document.visibilityState === "hidden") save({ quiet: true }); });
+window.addEventListener("pagehide", () => { if (state) save({ quiet: true }); });
