@@ -744,7 +744,7 @@ function saveableState(rawState, username) {
   return state;
 }
 function json(response, status, payload, headers = {}) {
-  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
+  response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", ...headers });
   response.end(JSON.stringify(payload));
 }
 function readBody(request) {
@@ -764,14 +764,28 @@ async function authenticatedAccount(request) {
   const account = await accountByKey(session.key);
   return account ? { account, key: session.key } : null;
 }
-async function serveStatic(pathname, response) {
+async function serveStatic(pathname, request, response) {
   const requested = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
   const filePath = normalize(join(publicRoot, requested));
   if (!filePath.startsWith(`${publicRoot}${sep}`) && filePath !== join(publicRoot, "index.html")) return json(response, 403, { error: "Forbidden" });
   try {
     const info = await stat(filePath);
     if (!info.isFile()) return json(response, 404, { error: "Not found" });
-    response.writeHead(200, { "Content-Type": mimeTypes[extname(filePath)] || "application/octet-stream", "Cache-Control": "no-cache" });
+    const etag = `W/"${info.size}-${Math.floor(info.mtimeMs)}"`;
+    const baseHeaders = {
+      "Cache-Control": requested === "index.html" ? "no-cache" : "public, max-age=3600, stale-while-revalidate=86400",
+      "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "ETag": etag,
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+    };
+    if (request.headers["if-none-match"] === etag) {
+      response.writeHead(304, baseHeaders);
+      return response.end();
+    }
+    response.writeHead(200, { "Content-Type": mimeTypes[extname(filePath)] || "application/octet-stream", ...baseHeaders });
     createReadStream(filePath).pipe(response);
   } catch { json(response, 404, { error: "Not found" }); }
 }
@@ -952,7 +966,7 @@ const server = createServer(async (request, response) => {
       const result = await mutate(() => executeRaid(current.key, targetId, spy ? { probes: body.probes } : body.fleet || {}, spy));
       return json(response, 200, result);
     }
-    if (request.method === "GET") return serveStatic(url.pathname, response);
+    if (request.method === "GET") return serveStatic(url.pathname, request, response);
     return json(response, 405, { error: "Method not allowed" });
   } catch (error) {
     console.error(error);
