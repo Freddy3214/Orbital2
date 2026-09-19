@@ -51,7 +51,7 @@ const defaultState = (commander, position) => {
   version: 4, commander, createdAt: Date.now(),
   resources: { metal: 20000, crystal: 10000, tritium: 5000, lastUpdate: Date.now() },
   buildings: { ...buildings },
-  research: { energyTech: 0, combustionDrive: 0, plasmaTheory: 0, avionics: 0, deepSpaceSensors: 0, constructionEngineering: 0 },
+  research: { energyTech: 0, combustionDrive: 0, plasmaTheory: 0, avionics: 0, deepSpaceSensors: 0, constructionEngineering: 0, computerTech: 0, storageTech: 0 },
   ships: { cargoDrone: 0, interceptor: 0, colonyShip: 0, spyProbe: 0 },
   activePlanetId: "vesta-prime",
   planets: [{
@@ -160,16 +160,20 @@ async function updateAccountState(key, state) {
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
   const knownMessages = new Set();
+  const readMessageIds = new Set((state.messages || []).filter(message => message.read === true).map(message => message.id));
   state.messages = [...(previous.state.messages || []), ...(state.messages || [])]
     .filter((message) => message && message.id && !knownMessages.has(message.id) && knownMessages.add(message.id))
+    .map(message => ({ ...message, read: message.read === true || readMessageIds.has(message.id) }))
     .slice(0, 80);
   const knownCombatReports = new Set();
   state.combatReports = [...(previous.state.combatReports || []), ...(state.combatReports || [])]
     .filter((report) => report && report.id && !knownCombatReports.has(report.id) && knownCombatReports.add(report.id))
     .slice(0, 40);
   const knownNotifications = new Set();
+  const readNotificationIds = new Set((state.notifications || []).filter(notice => notice.read === true).map(notice => notice.id));
   state.notifications = [...(previous.state.notifications || []), ...(state.notifications || [])]
     .filter((notification) => notification && notification.id && !knownNotifications.has(notification.id) && knownNotifications.add(notification.id))
+    .map(notice => ({ ...notice, read: notice.read === true || readNotificationIds.has(notice.id) }))
     .slice(0, 40);
   const incomingPlanets = new Map(state.planets.map((planet) => [planet.id, planet]));
   state.planets = state.planets.filter(p => !String(p.id).startsWith("frontier-"));
