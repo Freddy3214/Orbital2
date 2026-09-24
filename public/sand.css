@@ -20,3 +20,28 @@ body { background:#27251f; }.starfield { background:radial-gradient(ellipse at t
 .signal-point.system-signal:hover i { transform:translate(-50%,-50%) scale(1.18); box-shadow:0 0 18px #fff4d8,0 0 42px #ffc866; }
 .signal-point.system-signal.selected i { animation:system-pulse 1.8s ease-in-out infinite; }
 .orbit-slot { border-color:#b89f7350; background:#302a20b8; }.orbit-slot.empty { background:#29261f88; }.orbit-slot.free { border-color:#88d3a05c; }.orbit-slot.occupied { border-color:#e1bb765c; }.orbit-slot:hover,.orbit-slot.selected { border-color:#ffdc98; background:#9b78453b; }.orbit-slot small { color:#c6b38f; }
+/* Command mailbox, logistics and timed construction support. */
+.mailbox-filters {display:flex;gap:7px;flex-wrap:wrap;margin:0 0 14px}
+.mailbox-filters .active {background:#cfac6b;color:#201b12}
+.mailbox-shell {display:grid;grid-template-columns:minmax(260px,.85fr) minmax(0,1.3fr);gap:14px;align-items:start}
+.mailbox-list {max-height:640px;overflow:auto;border:1px solid #9c865f;background:#29271f;border-radius:10px}
+.mail-row {display:grid;grid-template-columns:1fr auto;gap:8px;text-align:left;width:100%;background:#423b2e;color:#f5ead4;padding:15px;border:0;border-bottom:1px solid #847052}
+.mail-row strong,.mail-row small {grid-column:1/-1;overflow-wrap:anywhere}
+.mail-row small,.mail-row time {font-size:11px;color:#c9bda2}.mail-row .badge {justify-self:start}
+.mail-row.unread {border-left:4px solid #6ed4ea;background:#504834}.mail-row.selected,.mail-row:hover {background:#756044}
+.mail-row:focus-visible {outline:2px solid #91e6f7;outline-offset:-3px}
+.mailbox-reading {min-height:360px;overflow-wrap:anywhere}
+.mailbox-reading .mail-card {border:0;background:transparent}.mailbox-reading .mail-card p {white-space:pre-wrap;line-height:1.65}
+.compose-panel {margin-top:18px}.compose-panel summary {padding:17px;cursor:pointer;font-weight:700}
+.transfer-console {margin:18px 0}.transfer-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.transfer-grid label {display:block;font-size:12px}.transfer-grid input,.transfer-grid select {display:block;width:100%;padding:10px;margin-top:7px;background:#27251f;color:#fff0cf;border:1px solid #af966a;border-radius:5px}
+.transfer-ships {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
+.transfer-ships label {display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px;background:#27251f88;border-radius:6px}
+.transfer-ships small {display:block;color:#c5b393;font-size:11px}.transfer-ships input {width:80px;background:#25231d;color:white;border:1px solid #ad9365;padding:8px}
+.cargo-inputs {grid-template-columns:repeat(3,minmax(0,1fr))}
+.transfer-footer {display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:16px}
+.boost-banner {padding:14px 18px;margin-bottom:15px;background:linear-gradient(100deg,#315548,#625028);border:1px solid #b6d18c;border-radius:8px;color:#e9ffbc;font-weight:700}
+.entity-card--computerTech {--accent:#79d9ee;--accent-rgb:121,217,238}
+.entity-card--storageTech {--accent:#e7ba66;--accent-rgb:231,186,102}
+.entity-card--computerTech .atlas-art {filter:hue-rotate(18deg) saturate(1.2)}
+@media(max-width:800px){.mailbox-shell{grid-template-columns:1fr}.mailbox-list{max-height:360px}.transfer-ships,.transfer-grid{grid-template-columns:1fr}.transfer-footer{align-items:stretch;flex-direction:column}}
