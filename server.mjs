@@ -89,14 +89,43 @@ function saveLocalDatabase(database) {
   });
   return writeChain;
 }
+function normalizeAccount(account) {
+  if (!account) return account;
+  const state = account.state;
+  const home = state.planets.find(p=>p.homeworld) || state.planets[0];
+  for (const planet of state.planets) {
+    planet.resources ??= planet === home ? {...state.resources} : {metal:0,crystal:0,tritium:0,lastUpdate:Date.now()};
+  }
+  const active = state.planets.find(p=>p.id===state.activePlanetId) || home;
+  state.resources = active.resources;
+  return account;
+}
+function boostFinish(duration, at, until) {
+  const fastWork = Math.min(duration, Math.max(0, until-at)*20);
+  return at + fastWork/20 + duration-fastWork;
+}
+function applyBuildBoost(state, now) {
+  const oldUntil = Number(state.buildBoostUntil) || 0;
+  const until = now + 20*60_000;
+  const queues = [...state.planets.flatMap(p=>[p.buildingQueue?.[0],p.shipQueue]),state.queues?.research];
+  for (const queue of queues.filter(Boolean)) {
+    if (queue.completesAt <= now) continue;
+    const remaining = queue.completesAt-now;
+    const fast = Math.min(remaining, Math.max(0,oldUntil-now));
+    const work = fast*20 + remaining-fast;
+    queue.completesAt = boostFinish(work,now,until);
+    queue.startedAt = now;
+  }
+  state.buildBoostUntil = until;
+}
 function accountFromRow(row) {
-  return {
+  return normalizeAccount({
     id: row.id,
     username: row.username,
     createdAt: Number(row.created_at),
     password: { salt: row.password_salt, hash: row.password_hash },
     state: row.state,
-  };
+  });
 }
 async function initializeStorage() {
   if (!pool) return;
@@ -140,7 +169,7 @@ async function accountByKey(key) {
     return result.rows[0] ? accountFromRow(result.rows[0]) : null;
   }
   const database = await loadLocalDatabase();
-  return database.accounts[key] || null;
+  return normalizeAccount(database.accounts[key] || null);
 }
 async function createAccount(key, account) {
   if (pool) {
@@ -157,6 +186,7 @@ async function createAccount(key, account) {
 async function updateAccountState(key, state) {
   const previous = await accountByKey(key);
   if (asWholeNumber(state.revision) !== asWholeNumber(previous.state.revision)) fail("Der Spielstand hat sich geändert. Bitte synchronisieren.", 409);
+  state.buildBoostUntil = previous.state.buildBoostUntil || 0;
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
   const knownMessages = new Set();
@@ -164,6 +194,7 @@ async function updateAccountState(key, state) {
   state.messages = [...(previous.state.messages || []), ...(state.messages || [])]
     .filter((message) => message && message.id && !knownMessages.has(message.id) && knownMessages.add(message.id))
     .map(message => ({ ...message, read: message.read === true || readMessageIds.has(message.id) }))
+    .sort((a,b)=>b.at-a.at)
     .slice(0, 80);
   const knownCombatReports = new Set();
   state.combatReports = [...(previous.state.combatReports || []), ...(state.combatReports || [])]
@@ -174,6 +205,7 @@ async function updateAccountState(key, state) {
   state.notifications = [...(previous.state.notifications || []), ...(state.notifications || [])]
     .filter((notification) => notification && notification.id && !knownNotifications.has(notification.id) && knownNotifications.add(notification.id))
     .map(notice => ({ ...notice, read: notice.read === true || readNotificationIds.has(notice.id) }))
+    .sort((a,b)=>b.at-a.at)
     .slice(0, 40);
   const incomingPlanets = new Map(state.planets.map((planet) => [planet.id, planet]));
   state.planets = state.planets.filter(p => !String(p.id).startsWith("frontier-"));
@@ -186,11 +218,14 @@ async function updateAccountState(key, state) {
       buildings: incoming.buildings || planet.buildings || freshBuildings(false),
       buildingQueue: Array.isArray(incoming.buildingQueue) ? incoming.buildingQueue : [],
       shipQueue: incoming.shipQueue || null,
+      shipWaiting: incoming.shipWaiting || [],
+      resources: incoming.resources || planet.resources,
       usedFields: asWholeNumber(incoming.usedFields),
       defenses: incoming.defenses || planet.defenses || {},
     };
   }));
   for (const planet of state.planets) planet.defenses = Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(planet.defenses?.[key])]));
+  normalizeAccount({state});
   state.revision = asWholeNumber(previous.state.revision) + 1;
   if (pool) {
     await pool.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(state)]);
@@ -217,7 +252,7 @@ async function allAccounts() {
     return result.rows.map(accountFromRow);
   }
   const database = await loadLocalDatabase();
-  return Object.values(database.accounts);
+  return Object.values(database.accounts).map(normalizeAccount);
 }
 async function accountById(id) {
   if (pool) {
@@ -228,7 +263,7 @@ async function accountById(id) {
     return result.rows[0] ? accountFromRow(result.rows[0]) : null;
   }
   const database = await loadLocalDatabase();
-  return Object.values(database.accounts).find((account) => account.id === id) || null;
+  return normalizeAccount(Object.values(database.accounts).find((account) => account.id === id) || null);
 }
 function asWholeNumber(value, fallback = 0) {
   const number = Number(value);
@@ -477,7 +512,7 @@ function spyReportFor(attacker, defender, probeCount) {
       fields: Math.max(96, Math.min(390, asWholeNumber(planet.fields, 228))),
       usedFields: Math.max(0, asWholeNumber(planet.usedFields)),
     } : null,
-    resources: intelligence >= 1 ? Object.fromEntries(RESOURCE_KEYS.map((key) => [key, asWholeNumber(defender.state.resources?.[key])])) : null,
+    resources: intelligence >= 1 ? Object.fromEntries(RESOURCE_KEYS.map((key) => [key, asWholeNumber(planet.resources?.[key])])) : null,
     ships: intelligence >= 3 ? Object.fromEntries(Object.entries(defender.state.ships || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
     buildings: intelligence >= 4 ? Object.fromEntries(Object.entries(planet.buildings || defender.state.buildings || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
     research: intelligence >= 5 ? Object.fromEntries(Object.entries(defender.state.research || {}).map(([key, value]) => [key, asWholeNumber(value)])) : null,
@@ -517,11 +552,12 @@ function prepareRaid(attacker, defender, rawFleet) {
   if (won) {
     let remainingCapacity = capacity;
     for (const resource of RESOURCE_KEYS) {
-      const available = asWholeNumber(defender.state.resources?.[resource]);
+      const stock = primaryPlanet(defender).resources || defender.state.resources;
+      const available = asWholeNumber(stock[resource]);
       const amount = Math.min(available, Math.floor(available * 0.15), remainingCapacity);
       loot[resource] = amount;
       remainingCapacity -= amount;
-      defender.state.resources[resource] = available - amount;
+      stock[resource] = available - amount;
       attacker.state.resources[resource] = asWholeNumber(attacker.state.resources?.[resource]) + amount;
     }
   }
@@ -563,6 +599,7 @@ async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
   const targetPlanetId = targetId.slice(separator + 1);
   targetId = targetId.slice(0, separator);
   const applyAction = (attacker, defender) => {
+    normalizeAccount(attacker); normalizeAccount(defender);
     const targetPlanet = defender.state.planets.find((planet) => planet.id === targetPlanetId);
     if (!targetPlanet) fail("Dieses Ziel ist nicht verfügbar.", 404);
     const target = { ...defender, focusPlanet: targetPlanet };
@@ -718,6 +755,10 @@ function isSafeState(state) {
 function saveableState(rawState, username) {
   if (!isSafeState(rawState)) return null;
   const state = structuredClone(rawState);
+  if ((state.queues.research ? 1 : 0) + (state.queues.researchWaiting?.length || 0) > 5 ||
+      state.planets.some(p => (p.buildingQueue?.length || 0) > 5 || (p.shipQueue ? 1 : 0) + (p.shipWaiting?.length || 0) > 5)) {
+    fail("Maximal fünf Aufträge je Warteschlange, einschließlich laufendem Auftrag.", 400);
+  }
   state.version = 4;
   state.commander = username;
   for (const group of [state.buildings, state.research]) {
@@ -731,7 +772,7 @@ function saveableState(rawState, username) {
       ...planet,
       name: cleanPlanetName(planet.name) || randomWorldName(`${username}:${planet.id || index}`),
       buildings,
-      buildingQueue: Array.isArray(planet.buildingQueue) ? planet.buildingQueue.slice(0, 20) : [],
+      buildingQueue: Array.isArray(planet.buildingQueue) ? planet.buildingQueue : [],
       shipQueue: planet.shipQueue || null,
       usedFields: Object.values(buildings).reduce((sum, level) => sum + asWholeNumber(level), 0),
     };
@@ -739,6 +780,9 @@ function saveableState(rawState, username) {
   const homeworld = state.planets.find((planet) => planet.homeworld) || state.planets[0];
   state.buildings = { ...(homeworld?.buildings || legacyBuildings) };
   for (const resource of RESOURCE_KEYS) state.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(state.resources[resource]));
+  for (const planet of state.planets) if (planet.resources) {
+    for (const resource of RESOURCE_KEYS) planet.resources[resource] = Math.min(Number.MAX_SAFE_INTEGER, asWholeNumber(planet.resources[resource]));
+  }
   state.log = state.log.slice(0, 80);
   state.spyReports = Array.isArray(state.spyReports) ? state.spyReports.slice(0, 40) : [];
   state.combatReports = Array.isArray(state.combatReports) ? state.combatReports.slice(0, 40) : [];
@@ -881,6 +925,24 @@ const server = createServer(async (request, response) => {
         return account.state;
       });
       return json(response, 200, { state });
+    }
+    if (request.method === "POST" && url.pathname === "/api/test/grant-boost") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response,401,{error:"Anmeldung erforderlich"});
+      if (accountKey(current.account.username) !== accountKey("Lord Fredo")) return json(response,403,{error:"Nur Lord Fredo darf Bauboosts vergeben."});
+      const body = await readBody(request);
+      const username = cleanUsername(body.username);
+      if (!username) return json(response,400,{error:"Spielername erforderlich."});
+      const result = await mutate(async()=>{
+        const key=accountKey(username), account=await accountByKey(key);
+        if (!account) fail("Account nicht gefunden.",404);
+        applyBuildBoost(account.state,Date.now());
+        account.state.revision=asWholeNumber(account.state.revision)+1;
+        addNotification(account.state,"system","Bauboost aktiviert","Lord Fredo hat dir 20 Minuten 20-faches Bautempo geschenkt. Gilt für Gebäude, Forschung und Schiffe. Erneutes Vergeben erneuert die 20 Minuten.");
+        await persistAccountState(key,account.state);
+        return {username:account.username,until:account.state.buildBoostUntil};
+      });
+      return json(response,200,{ok:true,...result});
     }
     if (request.method === "POST" && url.pathname === "/api/test/grant-resources") {
       const current = await authenticatedAccount(request);
