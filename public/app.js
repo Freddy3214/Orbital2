@@ -244,9 +244,10 @@ let mailboxFilter = "all";
 let transferDraft = { destination:"", metal:0, crystal:0, tritium:0 };
 const QUEUE_LIMIT = 5;
 function boostedDuration(duration, at = Date.now()) {
-  const window = Math.max(0, (state.buildBoostUntil || 0) - at);
-  const accelerated = Math.min(duration, window * 20);
-  return accelerated / 20 + (duration - accelerated);
+  const before = Math.min(duration, Math.max(0, (state.buildBoostFrom || at) - at));
+  const window = Math.max(0, (state.buildBoostUntil || 0) - (at + before));
+  const accelerated = Math.min(duration - before, window * 20);
+  return before + accelerated / 20 + (duration - before - accelerated);
 }
 let mapGesture = null;
 let suppressMapClickUntil = 0;
