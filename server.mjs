@@ -117,6 +117,7 @@ function applyBuildBoost(state, now) {
     queue.startedAt = now;
   }
   state.buildBoostUntil = until;
+  state.buildBoostFrom = now;
 }
 function accountFromRow(row) {
   return normalizeAccount({
@@ -187,6 +188,7 @@ async function updateAccountState(key, state) {
   const previous = await accountByKey(key);
   if (asWholeNumber(state.revision) !== asWholeNumber(previous.state.revision)) fail("Der Spielstand hat sich geändert. Bitte synchronisieren.", 409);
   state.buildBoostUntil = previous.state.buildBoostUntil || 0;
+  state.buildBoostFrom = previous.state.buildBoostFrom || 0;
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
   const knownMessages = new Set();
