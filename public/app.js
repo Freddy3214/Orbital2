@@ -48,7 +48,7 @@ const BUILDINGS = {
   roboticsFactory: {
     icon: "⚙", image: "/assets/robotics-factory.svg", fieldCost: 3, name: "Roboterfabrik", group: "Infrastruktur", factor: 1.7, base: { metal: 400, crystal: 120 },
     description: "Montageeinheiten beschleunigen jeden Bauauftrag auf dieser Welt.",
-    detail: (level) => `Bautempo: +${level * 100}%`,
+    detail: (level) => `Bautempo: +${level * 8}%`,
     requires: () => [],
   },
   researchLab: {
@@ -139,7 +139,7 @@ const SHIPS = {
   cargoDrone: {
     icon: "◫", image: "/assets/cargo-drone.svg", name: "Frachtdrohne", cost: { metal: 180, crystal: 80, tritium: 40 },
     description: "Ein autonomer Transporter für Bergungs- und Liefermissionen.",
-    stats: "Stärke 4 · Fracht 500", requires: (s) => [
+    stats: "Stärke 4 · Fracht 850", requires: (s) => [
       requirement(s.buildings.shipyard >= 2, "Orbitalwerft Stufe 2"),
       requirement(s.research.combustionDrive >= 1, "Verbrennungsantrieb Stufe 1"),
     ],
@@ -147,7 +147,7 @@ const SHIPS = {
   interceptor: {
     icon: "⋈", image: "/assets/interceptor.svg", name: "Interzeptor", cost: { metal: 270, crystal: 160, tritium: 80 },
     description: "Leichter Abfangjäger für riskante Expeditionen und Piratenabwehr.",
-    stats: "Stärke 45 · keine Fracht", requires: (s) => [
+    stats: "Stärke 45 · Beutefracht 120", requires: (s) => [
       requirement(s.buildings.shipyard >= 1, "Orbitalwerft Stufe 1"),
       requirement(s.research.combustionDrive >= 1, "Verbrennungsantrieb Stufe 1"),
     ],
@@ -166,7 +166,7 @@ const SHIPYARD_ORDER = ["spyProbe", "colonyShip", "cargoDrone", "smallTransport"
 
 for (const [key,item] of Object.entries(FLEET)) if (item.name) SHIPS[key] = {
   ...item, icon:key.includes("Transport") ? "▱" : "➤", image:key.includes("Transport") ? "/assets/cargo-drone.svg" : "/assets/interceptor.svg",
-  description:key.includes("Transport") ? "Frachtkapazität für planetare Raubzüge." : "Schweres Kampfschiff für Angriffe und die Heimatverteidigung.",
+  description:key.includes("Transport") ? "Transportiert Vorräte zwischen eigenen Welten und unterstützt Raubzüge." : "Schweres Kampfschiff für Angriffe und die Heimatverteidigung.",
   stats:`Stärke ${item.power} · Fracht ${item.cargo}`,
   requires:s=>[requirement(s.buildings.shipyard>=item.level,`Orbitalwerft Stufe ${item.level}`),requirement(s.research.combustionDrive>=Math.ceil(item.level/2),`Verbrennungsantrieb Stufe ${Math.ceil(item.level/2)}`)]
 };
@@ -188,10 +188,12 @@ assignAtlas(BUILDINGS, FACILITY_ATLAS, 1.422, 3, {
   researchLab:[2,1], shipyard:[3,1], commandCenter:[0,2],
 });
 assignAtlas(RESEARCH, FACILITY_ATLAS, 1.422, 3, {
+  computerTech:[2,1], storageTech:[0,1],
   deepSpaceSensors:[1,2], energyTech:[2,0], combustionDrive:[3,1],
   avionics:[2,1], plasmaTheory:[2,1], constructionEngineering:[1,1],
 });
 assignAtlas(SHIPS, FLEET_ATLAS, 2.001, 2, {
+  spyProbe:[0,0], interceptor:[0,1], colonyShip:[3,1],
   cargoDrone:[0,0], smallTransport:[1,0], mediumTransport:[2,0], largeTransport:[3,0],
   frigate:[0,1], cruiser:[1,1], battleship:[2,1], destroyer:[3,1],
 });
@@ -236,6 +238,17 @@ let galaxyRadius = 14;
 let galaxySpan = 220;
 let galaxyZoom = 1;
 let raidSelection = {};
+let transferSelection = {};
+let selectedMailboxEntry = null;
+let mailboxFilter = "all";
+let transferDraft = { destination:"", metal:0, crystal:0, tritium:0 };
+const QUEUE_LIMIT = 5;
+function boostedDuration(duration, at = Date.now()) {
+  const before = Math.min(duration, Math.max(0, (state.buildBoostFrom || at) - at));
+  const window = Math.max(0, (state.buildBoostUntil || 0) - (at + before));
+  const accelerated = Math.min(duration - before, window * 20);
+  return before + accelerated / 20 + (duration - before - accelerated);
+}
 let mapGesture = null;
 let suppressMapClickUntil = 0;
 let galaxyOffset = { x: 0, y: 0 };
@@ -298,10 +311,17 @@ function costMarkup(cost) {
 function addLog(type, text) {
   state.log.unshift({ at: Date.now(), type, text });
   state.log = state.log.slice(0, 80);
+  if (/abgeschlossen|erforscht|übernommen|Konvoi|Transportverband/.test(text)) {
+    state.notifications ??= [];
+    state.notifications.unshift({id:"event-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),at:Date.now(),kind:type,title:type==="mission"?"Transport- und Flottenbericht":"Auftrag abgeschlossen",text,read:false});
+    state.notifications=state.notifications.slice(0,40);
+  }
 }
 function activePlanet() {
   return state.planets.find((planet) => planet.id === state.activePlanetId) || state.planets[0];
 }
+function planetResources(planet = activePlanet()) { return planet?.resources || state.resources; }
+function bindPlanetResources() { state.resources = planetResources(); }
 function planetBuildings(planet = activePlanet()) { return planet?.buildings || state.buildings || {}; }
 function planetState(planet = activePlanet()) { return { ...state, buildings: planetBuildings(planet) }; }
 function calculatedPlanetFields(planet = activePlanet()) {
@@ -336,13 +356,14 @@ function createColony() {
     classification: type.name,
     fields,
     usedFields: 1,
-    coordinates: `G 02 · Sektor ${20 + count} · Orbit ${2 + Math.floor(Math.random() * 13)}`,
+    coordinates: `G 02 · Sektor ${20 + count} · Orbit ${1 + Math.floor(Math.random() * 13)}`,
     colonizedAt: Date.now(),
     homeworld: false,
     buildings: Object.fromEntries(Object.keys(BUILDINGS).map((key) => [key, key === "commandCenter" ? 1 : 0])),
     buildingQueue: [],
     shipQueue: null,
     defenses: {},
+    resources: { metal: 0, crystal: 0, tritium: 0, lastUpdate: Date.now() },
   };
 }
 function ensureStateShape() {
@@ -353,6 +374,7 @@ function ensureStateShape() {
   state.combatReports ??= [];
   state.messages ??= [];
   state.notifications ??= [];
+  state.readReports ??= [];
   for (const key of Object.keys(state.research || {})) state.research[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(state.research[key]) || 0)));
   state.ships.colonyShip ??= 0;
   const legacyBuildings = { ...(state.buildings || {}) };
@@ -364,6 +386,7 @@ function ensureStateShape() {
   const legacyBuildingQueue = Array.isArray(state.queues.building) ? state.queues.building : state.queues.building ? [state.queues.building] : [];
   const legacyShipQueue = state.queues.ship || null;
   state.queues.research ??= null;
+  state.queues.researchWaiting ??= [];
   state.planets = state.planets.map((planet, index) => ({
     id: planet.id || `planet-${index}`,
     name: planet.name || `Kolonie ${index}`,
@@ -378,14 +401,21 @@ function ensureStateShape() {
     buildings: { ...(planet.buildings || (planet.homeworld || index === 0 ? legacyBuildings : emptyBuildings())) },
     buildingQueue: Array.isArray(planet.buildingQueue) ? planet.buildingQueue : (planet.homeworld || index === 0 ? legacyBuildingQueue : []),
     shipQueue: planet.shipQueue || (legacyShipQueue?.planetId === planet.id || (!legacyShipQueue?.planetId && (planet.homeworld || index === 0)) ? legacyShipQueue : null),
+    shipWaiting: Array.isArray(planet.shipWaiting) ? planet.shipWaiting : [],
     defenses: planet.defenses || {},
+    resources: { metal: 0, crystal: 0, tritium: 0, lastUpdate: Date.now(), ...(planet.resources || (planet.homeworld || index === 0 ? state.resources : {})) },
   }));
   for (const planet of state.planets) {
+    // Existing overlong queues are reduced without losing paid resources.
+    const removed = planet.buildingQueue.splice(5);
+    for (const item of removed) for (const key of Object.keys(RESOURCE_LABELS)) planet.resources[key] += Number(item.cost?.[key] || 0);
+    if (removed.length) addLog("system", `${planet.name}: ${removed.length} überzählige Bauaufträge erstattet (neues Limit: 5).`);
     const defaults = emptyBuildings();
     for (const key of Object.keys(defaults)) planet.buildings[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(planet.buildings[key] ?? defaults[key]) || 0)));
     planet.usedFields = calculatedPlanetFields(planet);
   }
   state.activePlanetId = state.planets.some((planet) => planet.id === state.activePlanetId) ? state.activePlanetId : state.planets[0].id;
+  bindPlanetResources();
   const homeworld = state.planets.find((planet) => planet.homeworld);
   state.buildings = { ...(homeworld?.buildings || legacyBuildings) };
   state.queues.building = [];
@@ -393,14 +423,32 @@ function ensureStateShape() {
 }
 function buildingQueue(planet = activePlanet()) { return Array.isArray(planet?.buildingQueue) ? planet.buildingQueue : []; }
 function shipQueue(planet = activePlanet()) { return planet?.shipQueue || null; }
+function researchOrders() { return [state.queues.research, ...(state.queues.researchWaiting || [])].filter(Boolean); }
+function shipOrders(planet = activePlanet()) { return [shipQueue(planet), ...(planet.shipWaiting || [])].filter(Boolean); }
+function projectedResearchLevel(key) { return (state.research[key] || 0) + researchOrders().filter(item => item.key === key).length; }
+function activateNextOrders(at) {
+  if (!state.queues.research && state.queues.researchWaiting.length) {
+    const item = state.queues.researchWaiting.shift();
+    const planet = state.planets.find(p => p.id === item.planetId) || activePlanet();
+    item.startedAt = at;
+    item.completesAt = at + researchTime(item.cost, planet, at);
+    state.queues.research = item;
+  }
+  for (const planet of state.planets) if (!planet.shipQueue && planet.shipWaiting?.length) {
+    const item = planet.shipWaiting.shift();
+    item.startedAt = at;
+    item.completesAt = at + shipTime(SHIPS[item.key], planet, at);
+    planet.shipQueue = item;
+  }
+}
 function constructionSpeedFactor(planet = activePlanet()) {
   return 1 + Math.min(100, planetBuildings(planet).roboticsFactory || 0) * .08 + Math.min(100, state.research.constructionEngineering || 0) * .12;
 }
 function buildingQueueSchedule(now = Date.now()) {
   let cursor = now;
   return buildingQueue().map((queue, index) => {
-    const duration = buildTime(queue.cost || getCost(BUILDINGS[queue.key], queue.targetLevel), queue.targetLevel);
     const start = index === 0 && queue.startedAt ? queue.startedAt : cursor;
+    const duration = buildTime(queue.cost || getCost(BUILDINGS[queue.key], queue.targetLevel), queue.targetLevel, activePlanet(), start);
     const end = index === 0 && queue.completesAt ? queue.completesAt : Math.max(cursor, start) + duration;
     cursor = Math.max(now, end);
     return { queue, index, start, end, duration };
@@ -448,7 +496,7 @@ function playerScore() {
   const levels = [...state.planets.flatMap((planet) => Object.values(planetBuildings(planet))), ...Object.values(state.research)];
   return Math.floor(levels.reduce((sum, level) => sum + level ** 2 * 12, 0) + Object.values(state.ships).reduce((sum, count) => sum + count * 4, 0));
 }
-function buildTime(cost, targetLevel = 1, planet = activePlanet()) {
+function buildTime(cost, targetLevel = 1, planet = activePlanet(), at = Date.now()) {
   const level = Math.max(1, Number(targetLevel) || 1);
   const resourceSeconds = (cost.metal + cost.crystal + cost.tritium) / 40;
   const progressionSeconds = 45 * 1.45 ** (level - 1);
@@ -456,21 +504,21 @@ function buildTime(cost, targetLevel = 1, planet = activePlanet()) {
   const robotics = Math.min(100, planetBuildings(planet).roboticsFactory || 0);
   const logistics = Math.min(100, state.research.constructionEngineering || 0);
   const speed = 1 + robotics * .08 + logistics * .12;
-  return Math.max(15000, (rawSeconds / speed) * 1000);
+  return boostedDuration(Math.max(15000, (rawSeconds / speed) * 1000), at);
 }
-function researchTime(cost) { return Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + planetBuildings().researchLab) * (1 + (state.research.computerTech || 0) * .08))) * 1000); }
-function shipTime(ship, planet = activePlanet()) {
+function researchTime(cost, planet = activePlanet(), at = Date.now()) { return boostedDuration(Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + planetBuildings(planet).researchLab) * (1 + (state.research.computerTech || 0) * .08))) * 1000), at); }
+function shipTime(ship, planet = activePlanet(), at = Date.now()) {
   const cost = ship.cost;
   const baseTime = ((cost.metal + cost.crystal + cost.tritium) / (105 * (1 + planetBuildings(planet).shipyard))) * 1000;
-  return Math.max(Number(ship.minimumBuildTimeMs) || 5000, baseTime);
+  return boostedDuration(Math.max(Number(ship.minimumBuildTimeMs) || 5000, baseTime), at);
 }
 
-function addProduction(hours) {
+function addProduction(hours, planet = activePlanet()) {
   if (hours <= 0) return;
-  const rate = production();
+  const rate = production(planet), resources = planetResources(planet);
   for (const resource of Object.keys(RESOURCE_LABELS)) {
-    const current = state.resources[resource];
-    state.resources[resource] = Math.max(current, Math.min(storageCap(resource), current + rate[resource] * hours));
+    const current = resources[resource];
+    resources[resource] = Math.max(current, Math.min(storageCap(resource, planetBuildings(planet)[`${resource}Storage`]), current + rate[resource] * hours));
   }
 }
 function grantResources(reward) {
@@ -495,7 +543,7 @@ function activateNextBuilding(at = Date.now(), planet = activePlanet()) {
   const next = buildingQueue(planet)[0];
   if (!next || next.startedAt) return;
   next.startedAt = at;
-  next.completesAt = at + buildTime(next.cost || getCost(BUILDINGS[next.key], next.targetLevel), next.targetLevel, planet);
+  next.completesAt = at + buildTime(next.cost || getCost(BUILDINGS[next.key], next.targetLevel), next.targetLevel, planet, at);
 }
 function resolveQueues(at) {
   for (const planet of state.planets) {
@@ -523,10 +571,38 @@ function resolveQueues(at) {
     addLog("system", `${RESEARCH[research.key].name} auf Stufe ${research.targetLevel} erforscht.`);
     state.queues.research = null;
   }
+  activateNextOrders(at);
 }
 function resolveMissions(at) {
   const remaining = [];
   for (const mission of state.missions) {
+    if (mission.kind === "transport") {
+      const destination = state.planets.find((planet) => planet.id === mission.destinationPlanetId);
+      if (mission.phase === "outgoing" && mission.arrivesAt <= at) {
+        if (destination && !mission.unloaded) {
+          const stock = planetResources(destination);
+          mission.returnCargo = {};
+          for (const key of Object.keys(RESOURCE_LABELS)) {
+            const amount = mission.cargo?.[key] || 0;
+            const room = Math.max(0, storageCap(key, planetBuildings(destination)[`${key}Storage`]) - (stock[key] || 0));
+            const delivered = Math.min(amount, room);
+            stock[key] = (stock[key] || 0) + delivered;
+            mission.returnCargo[key] = amount - delivered;
+          }
+          mission.unloaded = true;
+          addLog("mission", `Konvoi hat ${destination.name} beliefert und tritt den Rückflug an.`);
+        }
+        mission.phase = "returning";
+        mission.returnAt = mission.arrivesAt + mission.duration;
+        remaining.push(mission);
+      } else if (mission.phase === "returning" && mission.returnAt <= at) {
+        for (const [ship, count] of Object.entries(mission.fleet || {})) state.ships[ship] = (state.ships[ship] || 0) + count;
+        const source = state.planets.find(p=>p.id===mission.sourcePlanetId) || activePlanet();
+        for (const key of Object.keys(RESOURCE_LABELS)) planetResources(source)[key] += mission.returnCargo?.[key] || (!mission.unloaded ? mission.cargo?.[key] || 0 : 0);
+        addLog("mission", "Transportverband zurückgekehrt. Nicht entladbare Fracht wurde erstattet.");
+      } else remaining.push(mission);
+      continue;
+    }
     const target = MISSIONS[mission.targetId];
     if (mission.phase === "outgoing" && mission.arrivesAt <= at) {
       if (target.colonization) {
@@ -563,19 +639,27 @@ function resolveMissions(at) {
 function synchronize() {
   if (!state) return false;
   const now = Date.now();
-  let cursor = Math.min(Number(state.resources.lastUpdate) || now, now);
-  let changed = false;
-  let guard = 0;
+  let cursor = Math.min(...state.planets.map(p => Math.min(Number(planetResources(p).lastUpdate) || now, now)));
   for (const planet of state.planets) activateNextBuilding(cursor, planet);
-  while (cursor < now && guard < 80) {
-    const next = nextEventAfter(cursor, now);
-    if (next > cursor) { addProduction((next - cursor) / 3_600_000); cursor = next; changed = true; }
-    resolveQueues(cursor);
-    resolveMissions(cursor);
-    guard += 1;
+  activateNextOrders(cursor);
+  // Resolve overdue events at their original timestamp, then advance production.
+  for (let guard = 0; guard < 200; guard++) {
+    const due = [
+      ...state.planets.flatMap(p => [buildingQueue(p)[0]?.completesAt, shipQueue(p)?.completesAt]),
+      state.queues.research?.completesAt,
+      ...state.missions.map(m => m.phase === "returning" ? m.returnAt : m.arrivesAt)
+    ].filter(t => Number.isFinite(t) && t <= now);
+    const next = due.length ? Math.min(...due) : now;
+    for (const planet of state.planets) {
+      const stock = planetResources(planet), last = Number(stock.lastUpdate) || cursor;
+      if (next > last) { addProduction((next-last)/3_600_000, planet); stock.lastUpdate = next; }
+    }
+    resolveQueues(next);
+    resolveMissions(next);
+    if (!due.length) break;
   }
-  state.resources.lastUpdate = now;
-  return changed;
+  bindPlanetResources();
+  return true;
 }
 
 async function save({ quiet = false } = {}) {
@@ -774,20 +858,35 @@ function resourceTicker() {
   $("#resource-ticker").innerHTML = blocks.join("");
 }
 
+function orderSchedule(orders, kind, now=Date.now()) {
+  let cursor=now;
+  return orders.map((queue,index)=>{
+    const planet=state.planets.find(p=>p.id===queue.planetId) || activePlanet();
+    const start=queue.startedAt || cursor;
+    const duration=kind==="research" ? researchTime(queue.cost || getCost(RESEARCH[queue.key],queue.targetLevel),planet,start) : shipTime(SHIPS[queue.key],planet,start);
+    const end=queue.completesAt || start+duration;
+    cursor=end;
+    return {kind,queue,index,start,end,duration};
+  });
+}
+function queueOverview() { return `<section class="panel queue-planning-panel"><div class="panel-inner"><div class="panel-title"><h2>Aufträge</h2><span>Bau ${buildingQueue().length}/5 · Forschung ${researchOrders().length}/5 · Werft ${shipOrders().length}/5</span></div>${queueRows()}</div></section>`; }
 function queueRows(buildingsOnly = false) {
   const now = Date.now();
   const queued = [
     ...buildingQueueSchedule(now).map(({ queue, index, start, end, duration }) => ({ kind: "building", queue, index, start, end, duration })),
-    ...(buildingsOnly ? [] : [state.queues.research ? { kind: "research", queue: state.queues.research, index: 0 } : null, shipQueue() ? { kind: "ship", queue: shipQueue(), index: 0 } : null].filter(Boolean)),
+    ...(buildingsOnly ? [] : [
+      ...orderSchedule(researchOrders(), "research", now),
+      ...orderSchedule(shipOrders(), "ship", now),
+    ]),
   ];
   if (!queued.length) return `<div class="empty-state"><strong>Keine aktiven Aufträge</strong>Ressourcen werden weiter erzeugt, während du planst.</div>`;
   return `<div class="queue-stack">${queued.map(({ kind, queue, index, start, end, duration }) => {
     const config = kind === "building" ? BUILDINGS[queue.key] : kind === "research" ? RESEARCH[queue.key] : SHIPS[queue.key];
-    const waiting = kind === "building" && index > 0;
-    const total = kind === "building" ? duration : (queue.completesAt || now) - (queue.startedAt || now);
+    const waiting = index > 0;
+    const total = duration || (queue.completesAt || now) - (queue.startedAt || now);
     const percent = waiting ? 0 : Math.max(0, Math.min(100, ((now - queue.startedAt) / total) * 100));
     const label = kind === "building" ? `Stufe ${queue.targetLevel}` : kind === "research" ? `Stufe ${queue.targetLevel}` : `${queue.amount} Einheit`;
-    const effectiveEnd = kind === "building" ? end : queue.completesAt;
+    const effectiveEnd = end || queue.completesAt;
     const timing = waiting ? `Start ${formatDateTime(start)} · Ende ${formatDateTime(end)}` : `${formatDuration(effectiveEnd - now)} · Ende ${formatDateTime(effectiveEnd)}`;
     const cancel = kind === "building" ? `<button class="queue-cancel" data-cancel-building="${index}">${waiting ? "Auftrag entfernen" : "Bau abbrechen"} · 100 % zurück</button>` : "";
     return `<div class="queue-row ${waiting ? "waiting" : ""}"><div class="queue-top"><strong>${escapeHtml(config.name)} <span>· ${label}${waiting ? ` · Position ${index + 1}` : ""}</span></strong><span>${timing}</span></div><div class="progress"><i style="width:${percent}%"></i></div>${cancel}</div>`;
@@ -806,7 +905,7 @@ function overviewView() {
   const energy = energyStats();
   const rate = production();
   const planet = activePlanet();
-  const activeOrders = buildingQueue().length + (state.queues.research ? 1 : 0) + (shipQueue() ? 1 : 0);
+  const activeOrders = buildingQueue().length + researchOrders().length + shipOrders().length;
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1><p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Dein nächster Meilenstein ist die automatisierte Industrie.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
     <div class="grid overview-grid">
@@ -852,14 +951,14 @@ function entityCard(kind, key, config, level, cost, requirements, queueKind) {
   const isBuilding = queueKind === "building";
   const queue = isBuilding ? buildingQueue() : queueKind === "ship" ? shipQueue() : state.queues[queueKind];
   const isCurrent = isBuilding ? queue.some((item) => item.key === key) : queue?.key === key;
-  const target = isBuilding ? projectedBuildingLevel(key) + 1 : level + 1;
+  const target = isBuilding ? projectedBuildingLevel(key) + 1 : projectedResearchLevel(key) + 1;
   const atCap = target > LEVEL_CAP;
   const locked = requirements.some((item) => !item.ok);
   const affordable = hasResources(cost);
   const noFields = isBuilding && !hasFreeFields(config, key);
-  const blockedByQueue = !isBuilding && Boolean(queue);
+  const blockedByQueue = (isBuilding ? buildingQueue().length : researchOrders().length) >= QUEUE_LIMIT;
   const disabled = atCap || locked || !affordable || blockedByQueue || noFields;
-  const action = atCap ? "Maximalstufe erreicht" : blockedByQueue ? "Warteschlange belegt" : locked ? "Voraussetzung fehlt" : noFields ? "Keine Baufelder frei" : affordable ? (isBuilding ? "+1 einreihen" : "In Auftrag geben") : "Rohstoffe fehlen";
+  const action = atCap ? "Maximalstufe erreicht" : blockedByQueue ? "Warteschlange voll (5/5)" : locked ? "Voraussetzung fehlt" : noFields ? "Keine Baufelder frei" : affordable ? (isBuilding ? "+1 einreihen" : "In Auftrag geben") : "Rohstoffe fehlen";
   const queueNote = isBuilding && isCurrent ? `<span class="queue-badge">${queue.filter((item) => item.key === key).length} geplant</span>` : "";
   const actions = isBuilding
     ? `<div class="build-actions"><button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-build="${key}" ${disabled ? "disabled" : ""}>${action}</button><button class="secondary-button" data-build-batch="${key}" data-amount="3" ${disabled ? "disabled" : ""}>+3 planen</button></div>`
@@ -881,17 +980,17 @@ function buildingsView() {
   const makeGroup = (title, entries) => `<section class="entity-list"><div class="panel-title"><h2>${title}</h2><span>${title === "Ökonomie" ? "PRODUKTION" : "KOLONIALE SYSTEME"}</span></div>${entries.map(([key, config]) => { const level = planetBuildings()[key]; const cost = getCost(config, projected.buildings[key] + 1); const requirements = config.requires ? config.requires(projected) : []; return entityCard("build", key, config, level, cost, requirements, "building"); }).join("")}</section>`;
   const schedule = buildingQueueSchedule();
   const queueEnd = schedule.at(-1)?.end;
-  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · BAUTEMPO ${constructionSpeedFactor().toFixed(2)}×${queueEnd ? ` · FERTIG ${formatDateTime(queueEnd)}` : ""}</span></section><section class="panel queue-planning-panel"><div class="panel-inner"><div class="panel-title"><h2>Baureihe</h2><span>${buildingQueue().length ? `${buildingQueue().length} GEPLANT` : "FREI"}</span></div>${queueRows(true)}</div></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · BAUTEMPO ${constructionSpeedFactor().toFixed(2)}×${queueEnd ? ` · FERTIG ${formatDateTime(queueEnd)}` : ""}</span></section><section class="panel queue-planning-panel"><div class="panel-inner"><div class="panel-title"><h2>Baureihe</h2><span>${buildingQueue().length ? `${buildingQueue().length}/5 GEPLANT` : "0/5 FREI"}</span></div>${queueRows(true)}</div></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
 }
 function researchView() {
-  return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Das Labor der aktiven Welt bestimmt Voraussetzungen und Tempo.</p></div><span class="sector-label">LABOR STUFE ${planetBuildings().researchLab}</span></section><section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, level + 1); return entityCard("research", key, config, level, cost, config.requires(planetState()), "research"); }).join("")}</section>`;
+  return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Das Labor der aktiven Welt bestimmt Voraussetzungen und Tempo.</p></div><span class="sector-label">LABOR STUFE ${planetBuildings().researchLab}</span></section>${queueOverview()}<section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, projectedResearchLevel(key) + 1); return entityCard("research", key, config, level, cost, config.requires(planetState()), "research"); }).join("")}</section>`;
 }
 function shipCard(key, ship) {
   const queue = shipQueue();
   const locked = ship.requires(planetState()).some((item) => !item.ok);
   const affordable = hasResources(ship.cost);
-  const disabled = locked || !affordable || Boolean(queue);
-  const action = queue?.key === key ? "Im Bau" : queue ? "Werft belegt" : locked ? "Voraussetzung fehlt" : affordable ? "Einheit bauen" : "Rohstoffe fehlen";
+  const disabled = locked || !affordable || shipOrders().length >= QUEUE_LIMIT;
+  const action = shipOrders().length >= QUEUE_LIMIT ? "Warteschlange voll (5/5)" : locked ? "Voraussetzung fehlt" : affordable ? "+1 einreihen" : "Rohstoffe fehlen";
   const needs = ship.requires(planetState()).filter((item) => !item.ok).map((item) => item.text);
   return `<article class="entity-card entity-card--ship entity-card--${key} ${locked ? "locked" : ""}">${entityArtMarkup(ship)}<div class="entity-icon">${ship.icon}</div><div class="entity-info"><h2>${ship.name} <span class="badge">verfügbar: ${ship.isDefense ? (activePlanet().defenses?.[key] || 0) : state.ships[key]}</span></h2><p>${ship.description}</p><div class="meta"><span>${ship.stats}</span><span>Werftzeit: ${formatDuration(shipTime(ship))}</span></div>${needs.length ? `<div class="unlock-note">${needs.join(" · ")}</div>` : ""}</div><div class="entity-action"><p class="cost">${costMarkup(ship.cost)}</p><button class="${locked ? "secondary-button" : "primary-button"}" data-ship="${key}" ${disabled ? "disabled" : ""}>${action}</button></div></article>`;
 }
@@ -901,14 +1000,15 @@ function defenseView() {
 function shipyardView() {
   const deployed = state.missions.reduce((total, mission) => total + Object.values(mission.fleet).reduce((sum, count) => sum + count, 0), 0);
   const ships = SHIPYARD_ORDER.map((key) => [key, SHIPS[key]]).filter(([, ship]) => ship && !ship.isDefense);
-  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Spezialschiffe, Frachter und Kampfschiffe sind nach Baugruppe geordnet. Jede planetare Werft arbeitet mit eigener Warteschlange.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section><section class="entity-list">${ships.map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Spezialschiffe, Frachter und Kampfschiffe sind nach Baugruppe geordnet. Jede planetare Werft arbeitet mit eigener Warteschlange.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section>${queueOverview()}<section class="entity-list">${ships.map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
 }
 function missionStatusMarkup() {
   if (!state.missions.length) return `<div class="empty-state"><strong>Keine Flotten unterwegs</strong>Baue eine Frachtdrohne und beginne deine erste Bergung.</div>`;
   const now = Date.now();
   return `<div class="fleet-operations">${state.missions.map((mission) => {
-    const target = MISSIONS[mission.targetId] || { name: mission.targetId, coordinates: "Unbekannt" };
-    const returnAt = mission.returnAt || mission.arrivesAt + mission.duration / 2;
+    const destination = mission.kind === "transport" ? state.planets.find(planet => planet.id === mission.destinationPlanetId) : null;
+    const target = (destination ? {...destination,name:`Transport · ${state.planets.find(p=>p.id===mission.sourcePlanetId)?.name || "Startwelt"} → ${destination.name}`} : null) || MISSIONS[mission.targetId] || { name: mission.targetId, coordinates: "Unbekannt" };
+    const returnAt = mission.returnAt || mission.arrivesAt + mission.duration / (mission.kind === "transport" ? 1 : 2);
     const outboundDone = mission.phase === "returning";
     const outboundProgress = outboundDone ? 100 : Math.min(100, Math.max(0, (now - mission.departedAt) / (mission.arrivesAt - mission.departedAt) * 100));
     const returnProgress = outboundDone ? Math.min(100, Math.max(0, (now - mission.arrivesAt) / (returnAt - mission.arrivesAt) * 100)) : 0;
@@ -950,14 +1050,19 @@ function rankingView() {
 }
 function economyView() {
   const rates = production();
-  return tablePanel("Wirtschaft", ["Rohstoff", "Vorrat", "Produktion / Stunde", "Lagerkapazität"], Object.keys(RESOURCE_LABELS).map(key => `<tr><td>${RESOURCE_LABELS[key]}</td><td>${formatNumber(state.resources[key])}</td><td>+${formatNumber(rates[key])}</td><td>${formatNumber(storageCap(key))}</td></tr>`)) + `<p class="view-note">Energieeffizienz: ${Math.round(energyStats().efficiency * 100)} %. Wirtschaft und Schiffe werden derzeit zwischen deinen Planeten geteilt; Verteidigungsanlagen sind planetengebunden.</p>`;
+  return tablePanel("Wirtschaft", ["Rohstoff", "Vorrat", "Produktion / Stunde", "Lagerkapazität"], Object.keys(RESOURCE_LABELS).map(key => `<tr><td>${RESOURCE_LABELS[key]}</td><td>${formatNumber(state.resources[key])}</td><td>+${formatNumber(rates[key])}</td><td>${formatNumber(storageCap(key))}</td></tr>`)) + `<p class="view-note">Energieeffizienz: ${Math.round(energyStats().efficiency * 100)} %. Rohstofflager und Produktion gehören zur jeweiligen Welt. Konvois transportieren Vorräte; verfügbare Schiffe werden weiterhin gemeinsam verwaltet.</p>`;
 }
 function statisticsView() {
   const categories = [["Gebäude", state.planets.flatMap((planet) => Object.values(planetBuildings(planet))).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
   return tablePanel("Spielerstatistik", ["Bereich", "Punkte"], categories.map(([name,value]) => `<tr><td>${name}</td><td>${formatNumber(value)}</td></tr>`));
 }
 function fleetsView() {
-  return tablePanel("Flottenbefehle", ["Schiff", "Verfügbar"], Object.entries(SHIPS).filter(([,item]) => !item.isDefense).map(([key,item]) => `<tr><td>${item.name}</td><td>${formatNumber(state.ships[key])}</td></tr>`)) + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section><p class="view-note">Spionage, Angriffe und gezielte Besiedlung: Ziel im Sonnensystem auswählen.</p>`;
+  const transports = Object.entries(FLEET).filter(([key]) => ["cargoDrone","smallTransport","mediumTransport","largeTransport"].includes(key));
+  const destinations = state.planets.filter(planet => planet.id !== activePlanet().id);
+  const capacity = transports.reduce((sum, [key, item]) => sum + (transferSelection[key] || 0) * item.cargo, 0);
+  const selector = transports.map(([key, item]) => `<label><span>${escapeHtml(SHIPS[key].name)} <small>${formatNumber(state.ships[key] || 0)} verfügbar · ${formatNumber(item.cargo)} Fracht</small></span><input data-transfer-fleet="${key}" type="number" min="0" max="${state.ships[key] || 0}" value="${transferSelection[key] || 0}"></label>`).join("");
+  const convoy = destinations.length ? `<section class="panel transfer-console"><div class="panel-inner"><div class="panel-title"><h2>Interplanetarer Konvoi</h2><span>EIGENE WELTEN</span></div><p>Die Fracht wird beim Start verladen und am Ziel entladen. Transporter kehren automatisch zurück. Bei vollen Ziellagern bringen sie den Überschuss wieder mit.</p><div class="transfer-grid"><label>Startwelt<input value="${escapeHtml(activePlanet().name)}" disabled></label><label>Zielwelt<select id="transfer-destination">${destinations.map(p => `<option value="${escapeHtml(p.id)}" ${transferDraft.destination === p.id ? "selected" : ""}>${escapeHtml(p.name)} · ${escapeHtml(p.coordinates)}</option>`).join("")}</select></label></div><div class="transfer-ships">${selector}</div><div class="transfer-grid cargo-inputs">${Object.keys(RESOURCE_LABELS).map(key => `<label>${resourceIconMarkup(key, "resource-icon--inline")} ${RESOURCE_LABELS[key]}<input id="transfer-${key}" type="number" min="0" max="${Math.floor(state.resources[key] || 0)}" value="${transferDraft[key] || 0}" data-transfer-resource="${key}"></label>`).join("")}</div><div class="transfer-footer"><span>Gewählte Kapazität: <b id="transfer-capacity">${formatNumber(capacity)}</b></span><button class="primary-button" data-start-transfer ${capacity ? "" : "disabled"}>Konvoi entsenden</button></div></div></section>` : `<section class="panel panel-inner"><div class="empty-state"><strong>Noch keine Zielwelt</strong>Besiedle eine zweite Welt, um eigene Rohstoffe zwischen Planeten zu transportieren.</div></section>`;
+  return tablePanel("Flottenbefehle", ["Schiff", "Verfügbar"], Object.entries(SHIPS).filter(([,item]) => !item.isDefense).map(([key,item]) => `<tr><td>${item.name}</td><td>${formatNumber(state.ships[key])}</td></tr>`)) + convoy + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section><p class="view-note">Spionage, Angriffe und gezielte Besiedlung: Ziel im Sonnensystem auswählen.</p>`;
 }
 function techtreeView() {
   return tablePanel("Technologiebaum", ["Technologie / Einheit", "Voraussetzungen", "Status"], [...Object.values(BUILDINGS), ...Object.values(RESEARCH), ...Object.values(SHIPS)].map(item => {
@@ -1039,15 +1144,42 @@ function combatArchiveMarkup(report) {
   const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") || "keine Beute";
   return `<article class="mail-card combat-archive"><div class="mail-card-head"><span class="badge">KAMPF · ${report.won ? "SIEG" : "VERLUST"}</span><time>${formatDateTime(report.at)}</time></div><h3>${escapeHtml(report.side === "attacker" ? "Raubzug gegen" : "Angriff von")} ${escapeHtml(report.opponent)}</h3><p>Angriff ${formatNumber(report.attackPower)} · Abwehr ${formatNumber(report.defensePower)}</p><p>Beute: ${loot}</p><small>Eigene Verluste: ${escapeHtml(report.attackerLosses || "keine")}</small></article>`;
 }
+function mailboxEntries() {
+  return [
+    ...state.messages.map(item => ({kind:item.direction === "inbound" ? "mail" : "sent", id:item.id, at:item.at, title:item.subject, from:item.direction === "inbound" ? item.sender : item.recipient, preview:item.body, item})),
+    ...state.spyReports.map(item => ({kind:"spy", id:item.id || item.createdAt, at:item.createdAt, title:"Spionagebericht · " + item.signature, from:item.owner || "Aufklärung", preview:"Detailstufe " + item.intelligence + "/5 · " + (item.world ? item.world.fields + " Baufelder" : "Weltparameter verborgen"), item})),
+    ...state.combatReports.map(item => ({kind:"combat", id:item.id || item.at, at:item.at, title:"Kampfbericht · " + (item.won ? "Sieg" : "Verlust"), from:item.opponent, preview:"Angriff " + formatNumber(item.attackPower) + " · Abwehr " + formatNumber(item.defensePower), item})),
+    ...state.notifications.map(item => ({kind:"system", id:item.id, at:item.at, title:item.title, from:"Spielbericht", preview:item.text, item}))
+  ].map(entry => ({...entry, key:entry.kind + ":" + entry.id, unread:entry.kind !== "sent" && !entry.item.read && !state.readReports.includes(entry.kind + ":" + entry.id)})).sort((a,b)=>b.at-a.at);
+}
 function messagesView() {
-  const messages = [...(state.messages || [])].sort((a, b) => b.at - a.at);
-  const spyReports = [...(state.spyReports || [])].sort((a, b) => b.createdAt - a.createdAt);
-  const combatReports = [...(state.combatReports || [])].sort((a, b) => b.at - a.at);
-  const unread = messages.filter((message) => message.direction === "inbound" && !message.read).length;
-  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDOKANAL</span><h1>Nachrichten & Berichte</h1><p>Direktnachrichten, Aufklärung und Kampfergebnisse bleiben hier als Archiv erhalten.</p></div><span class="sector-label">${unread} UNGELESEN · ${messages.length} NACHRICHTEN</span></section><div class="grid two-column"><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Neue Nachricht</h2><span>DIREKTKANAL</span></div><form id="message-compose" class="message-compose"><label>Empfänger<input name="recipient" required maxlength="20" value="${escapeHtml(messageRecipient)}" placeholder="Kommandantenname"></label><label>Betreff<input name="subject" required maxlength="72" value="${escapeHtml(messageSubject)}" placeholder="z. B. Handelsangebot"></label><label>Nachricht<textarea name="body" required maxlength="1200" rows="5" placeholder="Deine Nachricht an einen anderen Kommandanten"></textarea></label><button class="primary-button" type="submit">Nachricht senden</button></form></div></section><section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Systemalarme</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section></div><section class="archive-section"><div class="panel-title"><h2>Postfach</h2><span>${messages.length} EINTRÄGE</span></div><div class="mail-grid">${messages.map(mailboxMessageMarkup).join("") || `<div class="empty-state"><strong>Postfach leer</strong>Suche einen Spieler und eröffne einen direkten Kanal.</div>`}</div></section><section class="archive-section"><div class="panel-title"><h2>Spionageberichte</h2><span>${spyReports.length} ARCHIVIERT</span></div><div class="mail-grid">${spyReports.map(spyArchiveMarkup).join("") || `<div class="empty-state"><strong>Keine Aufklärung verfügbar</strong>Wähle in der Galaxie einen gegnerischen Planeten und entsende Sonden.</div>`}</div></section><section class="archive-section"><div class="panel-title"><h2>Kampfberichte</h2><span>${combatReports.length} ARCHIVIERT</span></div><div class="mail-grid">${combatReports.map(combatArchiveMarkup).join("") || `<div class="empty-state"><strong>Keine Kampfberichte</strong>Angriffe und Abwehraktionen werden nach dem Gefecht hier gespeichert.</div>`}</div></section>`;
+  const all = mailboxEntries();
+  const entries = all.filter(entry => mailboxFilter === "all" || (mailboxFilter === "unread" ? entry.unread : entry.kind === mailboxFilter));
+  const selected = all.find(entry => entry.key === selectedMailboxEntry);
+  const labels = {all:"Alle", unread:"Ungelesen", mail:"Posteingang", sent:"Gesendet", spy:"Spionage", combat:"Kampf", system:"Spielberichte"};
+  let detail = '<div class="empty-state"><strong>Nachricht auswählen</strong>Klicke links auf eine Mail, um den vollständigen Bericht zu lesen.</div>';
+  if (selected) {
+    const item = selected.item;
+    detail = ["mail","sent"].includes(selected.kind) ? mailboxMessageMarkup(item) : selected.kind === "spy" ? spyArchiveMarkup(item) + reportSection("Flotte",item.ships,SHIPS) + reportSection("Infrastruktur",item.buildings,BUILDINGS) + reportSection("Forschung",item.research,RESEARCH) + reportSection("Planetare Abwehr",item.defenses,DEFENSE) : selected.kind === "combat" ? combatArchiveMarkup(item) : '<article class="mail-card"><span class="badge">SPIELBERICHT</span><h2>' + escapeHtml(item.title) + '</h2><time>' + formatDateTime(item.at) + '</time><p>' + escapeHtml(item.text) + '</p></article>';
+  }
+  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDOKANAL</span><h1>Postfach</h1><p>Direktnachrichten, Kampf-, Spionage- und Spielberichte an einem Ort.</p></div><span class="sector-label">${all.filter(e=>e.unread).length} UNGELESEN</span></section>
+  <div class="mailbox-filters">${Object.entries(labels).map(([key,label])=>`<button class="secondary-button ${mailboxFilter===key?"active":""}" data-mail-filter="${key}">${label}</button>`).join("")}</div>
+  <section class="mailbox-shell"><aside class="mailbox-list">${entries.map(entry=>`<button class="mail-row ${entry.unread?"unread":""} ${entry.key===selectedMailboxEntry?"selected":""}" data-mail-entry="${escapeHtml(entry.key)}"><span class="badge">${labels[entry.kind]}</span><time>${formatDateTime(entry.at)}</time><strong>${escapeHtml(entry.title)}</strong><small>${escapeHtml(entry.from || "System")} · ${escapeHtml(String(entry.preview || "").slice(0,110))}</small></button>`).join("") || '<div class="empty-state">Keine Nachrichten in diesem Ordner.</div>'}</aside><section class="panel mailbox-reading"><div class="panel-inner">${detail}</div></section></section>
+  <details class="panel compose-panel" ${messageRecipient?"open":""}><summary>✉ Neue Nachricht schreiben</summary><div class="panel-inner"><form id="message-compose" class="message-compose"><label>Empfänger<input name="recipient" required maxlength="20" value="${escapeHtml(messageRecipient)}" placeholder="Kommandantenname"></label><label>Betreff<input name="subject" required maxlength="72" value="${escapeHtml(messageSubject)}" placeholder="Betreff"></label><label>Nachricht<textarea name="body" required maxlength="1200" rows="5"></textarea></label><button class="primary-button" type="submit">Nachricht senden</button></form></div></details>`;
 }
 function playersView() {
-  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDANTENNETZ</span><h1>Spielersuche</h1><p>Finde einen Kommandanten und eröffne einen privaten Direktkanal. Der Empfänger erhält eine Meldung im eigenen Postfach.</p></div><span class="sector-label">${playerSearchResults.length} TREFFER</span></section><section class="panel"><div class="panel-inner"><form id="player-search-form" class="player-search" novalidate><input name="query" maxlength="20" placeholder="Kommandantenname suchen"><button class="primary-button" type="button" data-player-search>Spieler suchen</button></form></div></section><section class="archive-section"><div class="panel-title"><h2>Gefundene Kommandanten</h2><span>ONLINE-DATENBANK</span></div><div class="mail-grid">${playerSearchResults.map((player) => `<article class="mail-card"><span class="badge">KOMMANDANT</span><h3>${escapeHtml(player.username)}</h3><p>${formatNumber(player.score)} Punkte · ${player.planets} Planet${player.planets === 1 ? "" : "en"}</p><div class="player-actions"><button class="primary-button" data-message-player="${escapeHtml(player.username)}">Nachricht schreiben</button>${canGrantTestResources ? `<button class="secondary-button" data-test-grant="${escapeHtml(player.username)}">50.000 je Ressource senden</button>` : ""}</div></article>`).join("") || `<div class="empty-state"><strong>Suche starten</strong>Gib mindestens drei Zeichen des Kommandantennamens ein.</div>`}</div></section>`;
+  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDANTENNETZ</span><h1>Spielersuche</h1><p>Finde einen Kommandanten und eröffne einen privaten Direktkanal. Der Empfänger erhält eine Meldung im eigenen Postfach.</p></div><span class="sector-label">${playerSearchResults.length} TREFFER</span></section><section class="panel"><div class="panel-inner"><form id="player-search-form" class="player-search" novalidate><input name="query" maxlength="20" placeholder="Kommandantenname suchen"><button class="primary-button" type="button" data-player-search>Spieler suchen</button></form></div></section><section class="archive-section"><div class="panel-title"><h2>Gefundene Kommandanten</h2><span>ONLINE-DATENBANK</span></div><div class="mail-grid">${playerSearchResults.map((player) => `<article class="mail-card"><span class="badge">KOMMANDANT</span><h3>${escapeHtml(player.username)}</h3><p>${formatNumber(player.score)} Punkte · ${player.planets} Planet${player.planets === 1 ? "" : "en"}</p><div class="player-actions"><button class="primary-button" data-message-player="${escapeHtml(player.username)}">Nachricht schreiben</button>${canGrantTestResources ? `<button class="secondary-button" data-test-grant="${escapeHtml(player.username)}">50.000 je Ressource senden</button><button class="secondary-button" data-test-boost="${escapeHtml(player.username)}">20 Min. Bauboost · −95 %</button>` : ""}</div></article>`).join("") || `<div class="empty-state"><strong>Suche starten</strong>Gib mindestens drei Zeichen des Kommandantennamens ein.</div>`}</div></section>`;
+}
+async function grantBuildBoost(username) {
+  if (!canGrantTestResources || actionBusy) return;
+  actionBusy = true;
+  try {
+    const response = await fetch("/api/test/grant-boost", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username})});
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Boost fehlgeschlagen.");
+    toast("Bauboost für " + result.username + " aktiviert: 20 Minuten, 20-faches Bautempo.");
+  } catch(error) { toast(error.message,true); }
+  finally { actionBusy = false; }
 }
 async function grantTestResources(username) {
   if (!canGrantTestResources || actionBusy) return;
@@ -1114,13 +1246,6 @@ async function sendPlayerMessage(form) {
 }
 function render() {
   if (!state) return;
-  if (activeView === "messages" && document.visibilityState !== "hidden") {
-    let changed = false;
-    for (const item of [...state.messages.filter(message => message.direction === "inbound"), ...state.notifications]) {
-      if (!item.read) { item.read = true; changed = true; }
-    }
-    if (changed) { clearTimeout(saveTimer); saveTimer = setTimeout(() => save({ quiet: true }), 250); }
-  }
   lastFullRender = Date.now();
   resourceTicker();
   $("#commander-name").textContent = state.commander;
@@ -1131,10 +1256,10 @@ function render() {
   $(".planet-card span:not(.eyebrow)").textContent = activePlanet().coordinates;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
   const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
-  content.innerHTML = views[activeView]();
+  content.innerHTML = (state.buildBoostUntil > Date.now() ? `<div class="boost-banner">⚡ Bauboost aktiv · ${formatDuration(state.buildBoostUntil - Date.now())} · 20× Tempo für Gebäude, Forschung und Schiffe</div>` : "") + views[activeView]();
   const messageField = content.querySelector('#message-compose textarea[name="body"]');
   if (messageField) messageField.value = messageBody;
-  const unreadCount = state.messages.filter(message => message.direction === "inbound" && !message.read).length;
+  const unreadCount = mailboxEntries().filter(entry => entry.unread).length;
   const messageNav = document.querySelector('#nav [data-view="messages"]');
   if (messageNav) messageNav.innerHTML = `<span>✉</span> Nachrichten${unreadCount ? ` (${unreadCount})` : ""}`;
 }
@@ -1143,7 +1268,7 @@ function startBuilding(key, amount = 1) {
   synchronize();
   const config = BUILDINGS[key];
   let added = 0;
-  for (let index = 0; index < amount; index += 1) {
+  for (let index = 0; index < amount && buildingQueue().length < QUEUE_LIMIT; index += 1) {
     const projected = projectedBuildingState();
     const targetLevel = projected.buildings[key] + 1;
     if (targetLevel > LEVEL_CAP) break;
@@ -1170,6 +1295,13 @@ function cancelBuilding(index) {
   const config = BUILDINGS[item.key];
   for (const resource of Object.keys(RESOURCE_LABELS)) state.resources[resource] = Math.max(0, state.resources[resource] + Number(item.cost?.[resource] || 0));
   queue.splice(index, 1);
+  let nextLevel = planetBuildings()[item.key] || 0;
+  for (const pending of queue.filter(order => order.key === item.key)) {
+    pending.targetLevel = ++nextLevel;
+    const correctedCost = getCost(config,pending.targetLevel);
+    for (const resource of Object.keys(RESOURCE_LABELS)) state.resources[resource] += Math.max(0,(pending.cost?.[resource] || 0) - (correctedCost[resource] || 0));
+    pending.cost = correctedCost;
+  }
   if (index === 0) activateNextBuilding(Date.now());
   addLog("system", `${config.name} auf Stufe ${item.targetLevel} abgebrochen. Volle Kosten erstattet.`);
   toast(`${config.name} abgebrochen · volle Kosten zurückerstattet.`);
@@ -1179,14 +1311,15 @@ function cancelBuilding(index) {
 function startResearch(key) {
   synchronize();
   const config = RESEARCH[key];
-  const level = state.research[key];
+  const level = projectedResearchLevel(key);
   if (level >= LEVEL_CAP) return;
   const requirements = config.requires(planetState());
   const cost = getCost(config, level + 1);
-  if (state.queues.research || requirements.some((item) => !item.ok) || !hasResources(cost)) return;
+  if (researchOrders().length >= QUEUE_LIMIT || requirements.some((item) => !item.ok) || !hasResources(cost)) return;
   pay(cost);
   const startedAt = Date.now();
-  state.queues.research = { key, targetLevel: level + 1, startedAt, completesAt: startedAt + researchTime(cost) };
+  state.queues.researchWaiting.push({ key, targetLevel: level + 1, cost, planetId: activePlanet().id });
+  activateNextOrders(startedAt);
   addLog("system", `${config.name} auf Stufe ${level + 1} angestoßen.`);
   toast(`${config.name} wird erforscht.`);
   render();
@@ -1195,10 +1328,12 @@ function startResearch(key) {
 function startShip(key) {
   synchronize();
   const ship = SHIPS[key];
-  if (shipQueue() || ship.requires(planetState()).some((item) => !item.ok) || !hasResources(ship.cost)) return;
+  if (shipOrders().length >= QUEUE_LIMIT || ship.requires(planetState()).some((item) => !item.ok) || !hasResources(ship.cost)) return;
   pay(ship.cost);
   const startedAt = Date.now();
-  activePlanet().shipQueue = { key, amount: 1, planetId: activePlanet().id, startedAt, completesAt: startedAt + shipTime(ship) };
+  activePlanet().shipWaiting ??= [];
+  activePlanet().shipWaiting.push({ key, amount: 1, cost: ship.cost, planetId: activePlanet().id });
+  activateNextOrders(startedAt);
   addLog("system", `${ship.name} in der Orbitalwerft in Auftrag gegeben.`);
   toast(`${ship.name} wird montiert.`);
   render();
@@ -1219,6 +1354,32 @@ function startMission(targetId) {
   toast(`Flotte auf Kurs: ${target.name}.`);
   render();
   save({ quiet: true });
+}
+function startTransfer() {
+  if (actionBusy || isSaving) return toast("Speicherung läuft – bitte gleich erneut versuchen.");
+  synchronize();
+  const destinationId = $("#transfer-destination", content)?.value;
+  const destination = state.planets.find(planet => planet.id === destinationId);
+  const fleet = Object.fromEntries(Object.entries(transferSelection).filter(([key, count]) => ["cargoDrone","smallTransport","mediumTransport","largeTransport"].includes(key) && Number.isSafeInteger(count) && count > 0));
+  const capacity = Object.entries(fleet).reduce((sum, [key, count]) => sum + (FLEET[key]?.cargo || 0) * count, 0);
+  const cargo = Object.fromEntries(Object.keys(RESOURCE_LABELS).map(key => [key, Math.max(0, Math.floor(Number($(`#transfer-${key}`, content)?.value) || 0))]));
+  const total = Object.values(cargo).reduce((sum, value) => sum + value, 0);
+  if (!destination || destination.id === activePlanet().id || !Number.isSafeInteger(total) || !capacity || !total) return toast("Wähle Transporter, Zielwelt und Fracht.", true);
+  if (total > capacity) return toast(`Fracht überschreitet die Kapazität von ${formatNumber(capacity)}.`, true);
+  if (Object.keys(cargo).some(key => cargo[key] > (state.resources[key] || 0))) return toast("Nicht genügend Rohstoffe auf der Startwelt.", true);
+  for (const [key, count] of Object.entries(fleet)) if (count > (state.ships[key] || 0)) return toast("Ein gewählter Transporter ist nicht verfügbar.", true);
+  for (const key of Object.keys(cargo)) state.resources[key] -= cargo[key];
+  for (const [key, count] of Object.entries(fleet)) state.ships[key] -= count;
+  const sourcePos = activePlanet().position, targetPos = destination.position;
+  const distance = sourcePos && targetPos ? Math.hypot(sourcePos.x-targetPos.x,sourcePos.y-targetPos.y) : 5;
+  const duration = Math.max(45_000, Math.round((50_000 + distance * 18_000) / (1 + (state.research.combustionDrive || 0) * .12)));
+  const departedAt = Date.now();
+  state.missions.push({ id:`transport-${departedAt}`, kind:"transport", sourcePlanetId:activePlanet().id, destinationPlanetId:destination.id, departedAt, arrivesAt:departedAt + duration, duration, phase:"outgoing", fleet, cargo });
+  addLog("mission", `Konvoi nach ${destination.name} gestartet.`);
+  toast(`Konvoi nach ${destination.name} unterwegs.`);
+  transferSelection = {};
+  transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
+  render(); save({ quiet:true });
 }
 function pay(cost) { for (const resource of Object.keys(RESOURCE_LABELS)) state.resources[resource] = Math.max(0, state.resources[resource] - (cost[resource] || 0)); }
 function toast(message, error = false) {
@@ -1246,6 +1407,14 @@ content.addEventListener("input", event => {
     if (event.target.name === "body") messageBody = event.target.value;
   }
   if (event.target.dataset.fleetKey) raidSelection[event.target.dataset.fleetKey] = Math.max(0,Math.min(Number(event.target.max),Math.floor(Number(event.target.value)||0)));
+  if (event.target.dataset.transferFleet) {
+    transferSelection[event.target.dataset.transferFleet] = Math.max(0, Math.min(Number(event.target.max), Math.floor(Number(event.target.value) || 0)));
+    const capacity = Object.entries(transferSelection).reduce((sum,[key,count])=>sum+(FLEET[key]?.cargo || 0)*count,0);
+    $("#transfer-capacity").textContent = formatNumber(capacity);
+    $("[data-start-transfer]").disabled = !capacity;
+  }
+  if (event.target.dataset.transferResource) transferDraft[event.target.dataset.transferResource] = Math.max(0,Math.floor(Number(event.target.value)||0));
+  if (event.target.id === "transfer-destination") transferDraft.destination = event.target.value;
 });
 content.addEventListener("submit", event => {
   if (event.target.id === "message-compose") { event.preventDefault(); sendPlayerMessage(event.target); }
@@ -1301,7 +1470,16 @@ content.addEventListener("click", (event) => {
     render();
     return;
   }
+  if (button.dataset.mailFilter) { mailboxFilter = button.dataset.mailFilter; render(); return; }
+  if (button.dataset.mailEntry) {
+    selectedMailboxEntry = button.dataset.mailEntry;
+    const entry = mailboxEntries().find(item => item.key === selectedMailboxEntry);
+    if (entry) { entry.item.read = true; state.readReports = [...new Set([...state.readReports, entry.key])].slice(-240); }
+    render(); save({ quiet:true }); return;
+  }
+  if (button.dataset.testBoost) { grantBuildBoost(button.dataset.testBoost); return; }
   if (button.dataset.testGrant) { grantTestResources(button.dataset.testGrant); return; }
+  if (button.dataset.startTransfer !== undefined) { startTransfer(); return; }
   if (button.dataset.renamePlanet) { renamePlanet(button.dataset.renamePlanet); return; }
   if (button.dataset.replyTo) {
     messageRecipient = button.dataset.replyTo;
@@ -1346,6 +1524,8 @@ content.addEventListener("click", (event) => {
     const planet = state.planets.find((entry) => entry.id === button.dataset.planetId);
     if (!planet) return;
     state.activePlanetId = planet.id;
+    bindPlanetResources();
+    transferSelection = {}; transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
     addLog("system", `Aktive Welt auf ${planet.name} gewechselt.`);
     toast(`${planet.name} ist jetzt die aktive Welt.`);
     render();
@@ -1369,6 +1549,8 @@ $("#save-button").addEventListener("click", () => { if (!actionBusy) save(); });
 $("#planet-switch").addEventListener("change", async (event) => {
   if (isSaving || actionBusy) { event.target.value = activePlanet().id; return; }
   state.activePlanetId = event.target.value;
+  bindPlanetResources();
+  transferSelection = {}; transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
   galaxyOffset = { x: 0, y: 0 };
   selectedSignalId = null;
   selectedOrbitTargetId = null;
@@ -1395,8 +1577,8 @@ setInterval(() => {
     });
   } else {
     resourceTicker();
-    const liveCountdownView = ["buildings", "research", "shipyard", "defense", "fleets"].includes(activeView);
-    if (!editingText && !selectingText && (liveCountdownView || Date.now() - lastFullRender >= 5_000)) render();
+    const liveCountdownView = ["overview", "buildings", "research", "shipyard", "defense", "fleets"].includes(activeView);
+    if (!editingText && !selectingText && activeView !== "messages" && (liveCountdownView || Date.now() - lastFullRender >= 5_000)) render();
   }
   if (Date.now() - lastAutoSave >= 15_000) {
     lastAutoSave = Date.now();
