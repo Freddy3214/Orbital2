@@ -241,6 +241,10 @@ let raidSelection = {};
 let transferSelection = {};
 let selectedMailboxEntry = null;
 let mailboxFilter = "all";
+let mailboxSearch = "";
+let mailboxSearchDraft = "";
+let mailboxSelection = new Set();
+let transferStep = 1;
 let transferDraft = { destination:"", metal:0, crystal:0, tritium:0 };
 const QUEUE_LIMIT = 5;
 function boostedDuration(duration, at = Date.now()) {
@@ -375,6 +379,7 @@ function ensureStateShape() {
   state.messages ??= [];
   state.notifications ??= [];
   state.readReports ??= [];
+  state.archivedReports = Array.isArray(state.archivedReports) ? state.archivedReports : [];
   for (const key of Object.keys(state.research || {})) state.research[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(state.research[key]) || 0)));
   state.ships.colonyShip ??= 0;
   const legacyBuildings = { ...(state.buildings || {}) };
@@ -907,12 +912,12 @@ function overviewView() {
   const planet = activePlanet();
   const activeOrders = buildingQueue().length + researchOrders().length + shipOrders().length;
   return `
-    <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1><p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Dein nächster Meilenstein ist die automatisierte Industrie.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
-    <div class="grid overview-grid">
-      <section class="panel hero-panel">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
+    <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1><p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Flotten, Baureihen und Meldungen bleiben hier im Blick.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
+    <div class="grid overview-grid command-overview">
+      <section class="panel hero-panel compact-planet">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
       <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
-      <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section>
+      <section class="panel command-alerts"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Industrieprotokoll</h2><span>PRO STUNDE</span></div><div class="stat-list"><div class="stat-line"><span>Metallförderung</span><strong>+${formatNumber(rate.metal)}</strong></div><div class="stat-line"><span>Kristallförderung</span><strong>+${formatNumber(rate.crystal)}</strong></div><div class="stat-line"><span>Tritiumproduktion</span><strong>+${formatNumber(rate.tritium)}</strong></div><div class="stat-line"><span>Mineneffizienz</span><strong class="${energy.efficiency === 1 ? "energy-good" : "energy-warning"}">${formatNumber(energy.efficiency * 100)}%</strong></div></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Nächste Upgrades</h2><span>ROUTE</span></div>${upgradePathMarkup()}</div></section>
     </div>
@@ -964,7 +969,7 @@ function entityCard(kind, key, config, level, cost, requirements, queueKind) {
     ? `<div class="build-actions"><button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-build="${key}" ${disabled ? "disabled" : ""}>${action}</button><button class="secondary-button" data-build-batch="${key}" data-amount="3" ${disabled ? "disabled" : ""}>+3 planen</button></div>`
     : `<button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-${kind}="${key}" ${disabled ? "disabled" : ""}>${action}</button>`;
   const levelDisplay = atCap ? `<strong>${LEVEL_CAP}</strong> · MAX` : `<strong>${level}</strong> → <strong>${target}</strong>`;
-  const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Erster Abschluss in ${formatDuration(isBuilding ? buildTime(cost, target) : researchTime(cost))}</span>`;
+  const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Arbeitsdauer: ${formatDuration(boostedDuration(isBuilding ? buildTime(cost, target) : researchTime(cost)))} · zzgl. vorheriger Aufträge</span>`;
   return `<article class="entity-card entity-card--${kind} entity-card--${key} ${locked || noFields ? "locked" : ""}" style="--level-progress:${Math.min(100, level)}%">${entityArtMarkup(config)}<div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><div class="level-meter" aria-label="Stufe ${level} von 100"><i></i></div><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>1 Baufeld je Stufe</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
 }
 function energyUseFor(key, level) {
@@ -1056,13 +1061,37 @@ function statisticsView() {
   const categories = [["Gebäude", state.planets.flatMap((planet) => Object.values(planetBuildings(planet))).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
   return tablePanel("Spielerstatistik", ["Bereich", "Punkte"], categories.map(([name,value]) => `<tr><td>${name}</td><td>${formatNumber(value)}</td></tr>`));
 }
+function transferPlan() {
+  const destination = state.planets.find(p => p.id === transferDraft.destination);
+  const fleet = Object.fromEntries(Object.entries(transferSelection).filter(([key,count]) => ["cargoDrone","smallTransport","mediumTransport","largeTransport"].includes(key) && Number.isSafeInteger(count) && count > 0));
+  const capacity = Object.entries(fleet).reduce((sum,[key,count])=>sum+(FLEET[key]?.cargo || 0)*count,0);
+  const cargo = Object.fromEntries(Object.keys(RESOURCE_LABELS).map(key=>[key,Math.max(0,Math.floor(Number(transferDraft[key]) || 0))]));
+  const total = Object.values(cargo).reduce((sum,n)=>sum+n,0);
+  const sourcePos = activePlanet().position, targetPos = destination?.position;
+  const distance = sourcePos && targetPos ? Math.hypot(sourcePos.x-targetPos.x,sourcePos.y-targetPos.y) : 5;
+  const duration = Math.max(45_000,Math.round((50_000+distance*18_000)/(1+(state.research.combustionDrive || 0)*.12)));
+  return {destination,fleet,capacity,cargo,total,duration};
+}
+function transferProblem(step = 3) {
+  const plan = transferPlan();
+  if (!plan.capacity || Object.entries(plan.fleet).some(([key,count])=>count>(state.ships[key] || 0))) return "Wähle mindestens einen verfügbaren Transporter.";
+  if (step >= 2 && (!plan.destination || plan.destination.id === activePlanet().id)) return "Wähle eine andere eigene Zielwelt.";
+  if (step >= 3 && (!Number.isSafeInteger(plan.total) || !plan.total || plan.total>plan.capacity)) return "Fracht muss größer als null sein und in die Transporter passen.";
+  if (step >= 3 && Object.keys(plan.cargo).some(key=>plan.cargo[key]>(state.resources[key] || 0))) return "Nicht genügend Rohstoffe auf der Startwelt.";
+  return "";
+}
 function fleetsView() {
   const transports = Object.entries(FLEET).filter(([key]) => ["cargoDrone","smallTransport","mediumTransport","largeTransport"].includes(key));
-  const destinations = state.planets.filter(planet => planet.id !== activePlanet().id);
-  const capacity = transports.reduce((sum, [key, item]) => sum + (transferSelection[key] || 0) * item.cargo, 0);
-  const selector = transports.map(([key, item]) => `<label><span>${escapeHtml(SHIPS[key].name)} <small>${formatNumber(state.ships[key] || 0)} verfügbar · ${formatNumber(item.cargo)} Fracht</small></span><input data-transfer-fleet="${key}" type="number" min="0" max="${state.ships[key] || 0}" value="${transferSelection[key] || 0}"></label>`).join("");
-  const convoy = destinations.length ? `<section class="panel transfer-console"><div class="panel-inner"><div class="panel-title"><h2>Interplanetarer Konvoi</h2><span>EIGENE WELTEN</span></div><p>Die Fracht wird beim Start verladen und am Ziel entladen. Transporter kehren automatisch zurück. Bei vollen Ziellagern bringen sie den Überschuss wieder mit.</p><div class="transfer-grid"><label>Startwelt<input value="${escapeHtml(activePlanet().name)}" disabled></label><label>Zielwelt<select id="transfer-destination">${destinations.map(p => `<option value="${escapeHtml(p.id)}" ${transferDraft.destination === p.id ? "selected" : ""}>${escapeHtml(p.name)} · ${escapeHtml(p.coordinates)}</option>`).join("")}</select></label></div><div class="transfer-ships">${selector}</div><div class="transfer-grid cargo-inputs">${Object.keys(RESOURCE_LABELS).map(key => `<label>${resourceIconMarkup(key, "resource-icon--inline")} ${RESOURCE_LABELS[key]}<input id="transfer-${key}" type="number" min="0" max="${Math.floor(state.resources[key] || 0)}" value="${transferDraft[key] || 0}" data-transfer-resource="${key}"></label>`).join("")}</div><div class="transfer-footer"><span>Gewählte Kapazität: <b id="transfer-capacity">${formatNumber(capacity)}</b></span><button class="primary-button" data-start-transfer ${capacity ? "" : "disabled"}>Konvoi entsenden</button></div></div></section>` : `<section class="panel panel-inner"><div class="empty-state"><strong>Noch keine Zielwelt</strong>Besiedle eine zweite Welt, um eigene Rohstoffe zwischen Planeten zu transportieren.</div></section>`;
-  return tablePanel("Flottenbefehle", ["Schiff", "Verfügbar"], Object.entries(SHIPS).filter(([,item]) => !item.isDefense).map(([key,item]) => `<tr><td>${item.name}</td><td>${formatNumber(state.ships[key])}</td></tr>`)) + convoy + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section><p class="view-note">Spionage, Angriffe und gezielte Besiedlung: Ziel im Sonnensystem auswählen.</p>`;
+  const destinations = state.planets.filter(p=>p.id!==activePlanet().id);
+  const plan = transferPlan();
+  const steps = ["Schiffe","Zielwelt","Auftrag & Fracht","Prüfen"];
+  let stage = "";
+  if (transferStep === 1) stage = `<h3>Transporter zusammenstellen</h3><div class="transfer-ships">${transports.map(([key,item])=>`<label><span>${escapeHtml(SHIPS[key].name)}<small>${formatNumber(state.ships[key] || 0)} verfügbar · ${formatNumber(item.cargo)} Fracht pro Schiff</small></span><input aria-label="${escapeHtml(SHIPS[key].name)} auswählen" data-transfer-fleet="${key}" type="number" min="0" max="${state.ships[key] || 0}" value="${transferSelection[key] || 0}"></label>`).join("")}</div><button class="secondary-button" data-transfer-all>Alle verfügbaren Transporter</button>`;
+  if (transferStep === 2) stage = `<h3>Flugroute wählen</h3><div class="transfer-grid"><label>Startwelt<input value="${escapeHtml(activePlanet().name)} · ${escapeHtml(activePlanet().coordinates)}" disabled></label><label>Zielwelt<select id="transfer-destination"><option value="">Bitte auswählen</option>${destinations.map(p=>`<option value="${escapeHtml(p.id)}" ${transferDraft.destination===p.id?"selected":""}>${escapeHtml(p.name)} · ${escapeHtml(p.coordinates)}</option>`).join("")}</select></label></div><p>Nur eigene Kolonien stehen für diesen Transport zur Auswahl.</p>`;
+  if (transferStep === 3) stage = `<h3>Auftrag: Rohstofftransport</h3><p>Fracht wird am Ziel entladen. Die Transporter kehren automatisch zurück; überschüssige Fracht bei vollen Lagern kommt wieder mit.</p><div class="transfer-grid cargo-inputs">${Object.keys(RESOURCE_LABELS).map(key=>`<label>${resourceIconMarkup(key,"resource-icon--inline")} ${RESOURCE_LABELS[key]}<input id="transfer-${key}" aria-label="${RESOURCE_LABELS[key]} transportieren" type="number" min="0" max="${Math.floor(state.resources[key] || 0)}" value="${transferDraft[key] || 0}" data-transfer-resource="${key}"><small>${formatNumber(state.resources[key])} verfügbar</small></label>`).join("")}</div><p>Beladen: <b id="transfer-loaded">${formatNumber(plan.total)}</b> / ${formatNumber(plan.capacity)}</p>`;
+  if (transferStep === 4) stage = `<h3>Startfreigabe prüfen</h3><div class="transfer-review"><div><span>Route</span><strong>${escapeHtml(activePlanet().name)} → ${escapeHtml(plan.destination?.name || "Ziel fehlt")}</strong></div><div><span>Flotte</span><strong>${Object.entries(plan.fleet).map(([key,count])=>`${count} × ${escapeHtml(SHIPS[key].name)}`).join(" · ")}</strong></div><div><span>Fracht</span><strong>${costMarkup(plan.cargo)}</strong></div><div><span>Hinflug / Gesamtflug</span><strong>${formatDuration(plan.duration)} / ${formatDuration(plan.duration*2)}</strong></div><div><span>Ankunft bei Start jetzt</span><strong>${formatDateTime(Date.now()+plan.duration)}</strong></div></div><p>Erst „Konvoi entsenden“ zieht Rohstoffe ab und startet die Flotte.</p>`;
+  const convoy = destinations.length ? `<section class="panel transfer-console"><div class="panel-inner"><div class="panel-title"><h2>Konvoiassistent</h2><span>SCHRITT ${transferStep} / 4</span></div><ol class="wizard-steps">${steps.map((label,i)=>`<li class="${i+1===transferStep?"current":i+1<transferStep?"done":""}" ${i+1===transferStep?'aria-current="step"':""}>${i+1}. ${label}</li>`).join("")}</ol><div class="wizard-stage">${stage}</div><div class="transfer-footer"><span>Frachtraum: <b id="transfer-capacity">${formatNumber(plan.capacity)}</b></span><div>${transferStep>1?'<button class="secondary-button" data-transfer-back>Zurück</button>':""} ${transferStep<4?'<button class="primary-button" data-transfer-next>Weiter →</button>':'<button class="primary-button" data-start-transfer>Konvoi entsenden</button>'}</div></div></div></section>` : '<section class="panel panel-inner"><div class="empty-state"><strong>Noch keine Zielwelt</strong>Besiedle eine zweite Welt, um Rohstoffe zwischen eigenen Planeten zu transportieren.</div></section>';
+  return `<section class="view-heading"><div><span class="eyebrow">FLOTTENKOMMANDO</span><h1>Flottenbefehle</h1><p>Transporte Schritt für Schritt planen. Für Spionage und Angriffe wählst du einen Planeten auf der Sternenkarte.</p></div><button class="secondary-button" data-open-galaxy>Sternenkarte öffnen</button></section>` + convoy + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><details class="panel fleet-inventory"><summary>Gesamte Flotte anzeigen</summary>${tablePanel("Flottenbestand",["Schiff","Verfügbar"],Object.entries(SHIPS).filter(([,item])=>!item.isDefense).map(([key,item])=>`<tr><td>${escapeHtml(item.name)}</td><td>${formatNumber(state.ships[key])}</td></tr>`))}</details><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
 }
 function techtreeView() {
   return tablePanel("Technologiebaum", ["Technologie / Einheit", "Voraussetzungen", "Status"], [...Object.values(BUILDINGS), ...Object.values(RESEARCH), ...Object.values(SHIPS)].map(item => {
@@ -1104,14 +1133,26 @@ function galaxyView() {
   const origin = point(galaxyOrigin);
   const selected = galaxyIntel.find(signal => signal.id === selectedSignalId);
   const target = selected ? point(selected.position) : null;
-  const stars = "";
-  const space = `<svg class="survey-field" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="survey-window"><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}"/></clipPath></defs><g clip-path="url(#survey-window)"><rect width="100" height="100" fill="#020309"/>${stars}</g><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}" fill="none" stroke="#73ae82" stroke-width=".12"/><path d="M ${origin.x} 0 V 100 M 0 ${origin.y} H 100" stroke="#59ba73" stroke-width=".12"/>${target ? `<path d="M ${target.x} 0 V 100 M 0 ${target.y} H 100" stroke="#e16e87" stroke-width=".15"/>` : ""}</svg>`;
+  const gridStep = 10 ** Math.floor(Math.log10(size / 6));
+  const spacing = size / gridStep > 14 ? gridStep * 5 : gridStep;
+  let stars = "";
+  for (let x = Math.ceil(left / spacing) * spacing; x < left + size; x += spacing) {
+    const px = (x-left)/size*100;
+    stars += `<path d="M ${px} 0 V 100"/><text x="${px+.6}" y="2.5">${Math.round(x)}</text>`;
+  }
+  for (let y = Math.ceil(top / spacing) * spacing; y < top + size; y += spacing) {
+    const py = (y-top)/size*100;
+    stars += `<path d="M 0 ${py} H 100"/><text x=".6" y="${py+2}">${Math.round(y)}</text>`;
+  }
+  stars = `<g class="coordinate-grid">${stars}</g>`;
+  const space = `<svg class="survey-field" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="survey-window"><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}"/></clipPath></defs><g clip-path="url(#survey-window)"><rect width="100" height="100" fill="#020309"/></g>${stars}<circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}" fill="none" stroke="#73ae82" stroke-width=".12"/><path d="M ${origin.x} 0 V 100 M 0 ${origin.y} H 100" stroke="#59ba73" stroke-width=".12"/>${target ? `<path d="M ${target.x} 0 V 100 M 0 ${target.y} H 100" stroke="#e16e87" stroke-width=".15"/>` : ""}</svg>`;
   const markers = galaxyIntel.map((system) => {
     const p = point(system.position);
     if (p.x < 2 || p.x > 97 || p.y < 3 || p.y > 95) return "";
     return `<button class="signal-point system-signal ${system.id === selectedSignalId ? "selected" : ""}" style="left:${p.x}%;top:${p.y}%;--star-size:${system.starSize}px;--star-light:${system.luminosity}" data-signal-id="${escapeHtml(system.id)}" aria-label="${escapeHtml(system.signature)} mit ${system.planetCount} sichtbaren Welten bei ${galaxyCoordinates(system.position)}"><i></i><span>${escapeHtml(system.signature)} · ${system.planetCount} Welten</span></button>`;
   }).join("");
   return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Je heller ein Stern leuchtet, desto mehr freie oder bewohnte Welten enthält sein System.</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
+  <div class="map-legend"><span><i class="legend-home"></i> Heimat</span><span><i class="legend-star"></i> Sternsystem · anklicken</span><span><i class="legend-range"></i> Sensorreichweite ${galaxyRadius.toFixed(1)}</span><span>Außerhalb: unerforscht · Tiefraumsensorik erweitert den Sichtkreis</span></div>
   <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="home">Heimat zentrieren</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
   <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SYSTEME · KARTENRAUM ${galaxySpan} × ${galaxySpan}<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Stern anklicken, dann eine Position 1–13 wählen.</small></div></section>${galaxyInspector()}</div>
@@ -1152,11 +1193,43 @@ function mailboxEntries() {
     ...state.notifications.map(item => ({kind:"system", id:item.id, at:item.at, title:item.title, from:"Spielbericht", preview:item.text, item}))
   ].map(entry => ({...entry, key:entry.kind + ":" + entry.id, unread:entry.kind !== "sent" && !entry.item.read && !state.readReports.includes(entry.kind + ":" + entry.id)})).sort((a,b)=>b.at-a.at);
 }
+function filteredMailboxEntries() {
+  const query = mailboxSearch.toLocaleLowerCase("de-DE");
+  return mailboxEntries().filter(entry => {
+    const archived = state.archivedReports.includes(entry.key);
+    const folder = mailboxFilter === "archive" ? archived : !archived && (mailboxFilter === "all" || (mailboxFilter === "unread" ? entry.unread : entry.kind === mailboxFilter));
+    return folder && (!query || [entry.title,entry.from,entry.preview].join(" ").toLocaleLowerCase("de-DE").includes(query));
+  });
+}
+function applyMailboxAction(action) {
+  const visible = filteredMailboxEntries();
+  if (action === "select") {
+    const allSelected = visible.length && visible.every(entry=>mailboxSelection.has(entry.key));
+    mailboxSelection = new Set(allSelected ? [] : visible.map(entry=>entry.key));
+    render(); return;
+  }
+  if (isSaving || actionBusy) return toast("Speicherung läuft – bitte gleich erneut versuchen.");
+  const selected = visible.filter(entry=>mailboxSelection.has(entry.key));
+  if (!selected.length) return toast("Bitte zuerst Nachrichten auswählen.");
+  const archived = new Set(state.archivedReports);
+  const read = new Set(state.readReports);
+  for (const entry of selected) {
+    if (action === "read") { entry.item.read = true; read.add(entry.key); }
+    if (action === "archive") archived.add(entry.key);
+    if (action === "restore") archived.delete(entry.key);
+  }
+  const existing = new Set(mailboxEntries().map(entry=>entry.key));
+  state.archivedReports = [...archived].filter(key=>existing.has(key));
+  state.readReports = [...read].slice(-240);
+  mailboxSelection.clear();
+  if (action !== "read") selectedMailboxEntry = null;
+  render(); save({quiet:true});
+}
 function messagesView() {
   const all = mailboxEntries();
-  const entries = all.filter(entry => mailboxFilter === "all" || (mailboxFilter === "unread" ? entry.unread : entry.kind === mailboxFilter));
-  const selected = all.find(entry => entry.key === selectedMailboxEntry);
-  const labels = {all:"Alle", unread:"Ungelesen", mail:"Posteingang", sent:"Gesendet", spy:"Spionage", combat:"Kampf", system:"Spielberichte"};
+  const entries = filteredMailboxEntries();
+  const selected = entries.find(entry => entry.key === selectedMailboxEntry);
+  const labels = {all:"Alle", unread:"Ungelesen", mail:"Posteingang", sent:"Gesendet", spy:"Spionage", combat:"Kampf", system:"Spielberichte", archive:"Archiv"};
   let detail = '<div class="empty-state"><strong>Nachricht auswählen</strong>Klicke links auf eine Mail, um den vollständigen Bericht zu lesen.</div>';
   if (selected) {
     const item = selected.item;
@@ -1164,7 +1237,9 @@ function messagesView() {
   }
   return `<section class="view-heading"><div><span class="eyebrow">KOMMANDOKANAL</span><h1>Postfach</h1><p>Direktnachrichten, Kampf-, Spionage- und Spielberichte an einem Ort.</p></div><span class="sector-label">${all.filter(e=>e.unread).length} UNGELESEN</span></section>
   <div class="mailbox-filters">${Object.entries(labels).map(([key,label])=>`<button class="secondary-button ${mailboxFilter===key?"active":""}" data-mail-filter="${key}">${label}</button>`).join("")}</div>
-  <section class="mailbox-shell"><aside class="mailbox-list">${entries.map(entry=>`<button class="mail-row ${entry.unread?"unread":""} ${entry.key===selectedMailboxEntry?"selected":""}" data-mail-entry="${escapeHtml(entry.key)}"><span class="badge">${labels[entry.kind]}</span><time>${formatDateTime(entry.at)}</time><strong>${escapeHtml(entry.title)}</strong><small>${escapeHtml(entry.from || "System")} · ${escapeHtml(String(entry.preview || "").slice(0,110))}</small></button>`).join("") || '<div class="empty-state">Keine Nachrichten in diesem Ordner.</div>'}</aside><section class="panel mailbox-reading"><div class="panel-inner">${detail}</div></section></section>
+  <form id="mailbox-search-form" class="mailbox-search"><input id="mailbox-search" type="search" aria-label="Nachrichten durchsuchen" placeholder="Betreff, Absender oder Text …" value="${escapeHtml(mailboxSearchDraft)}"><button class="primary-button" type="submit">Suchen</button><button class="secondary-button" type="button" data-mail-clear>Zurücksetzen</button></form>
+  <div class="mailbox-tools"><button class="secondary-button" data-mail-bulk="select">Alle / keine auswählen</button><button class="secondary-button" data-mail-bulk="read">Als gelesen markieren</button><button class="secondary-button" data-mail-bulk="${mailboxFilter === "archive" ? "restore" : "archive"}">${mailboxFilter === "archive" ? "Zurück ins Postfach" : "Archivieren"}</button><span><b id="mailbox-selected">${mailboxSelection.size}</b> ausgewählt · ${entries.length} Treffer</span></div>
+  <section class="mailbox-shell"><aside class="mailbox-list">${entries.map(entry=>`<div class="mail-list-item"><input type="checkbox" aria-label="${escapeHtml(entry.title)} auswählen" data-mail-select="${escapeHtml(entry.key)}" ${mailboxSelection.has(entry.key)?"checked":""}><button class="mail-row ${entry.unread?"unread":""} ${entry.key===selectedMailboxEntry?"selected":""}" data-mail-entry="${escapeHtml(entry.key)}"><span class="badge">${labels[entry.kind]}</span><time>${formatDateTime(entry.at)}</time><strong>${escapeHtml(entry.title)}</strong><small>${escapeHtml(entry.from || "System")} · ${escapeHtml(String(entry.preview || "").slice(0,110))}</small></button></div>`).join("") || '<div class="empty-state">Keine Nachrichten in diesem Ordner.</div>'}</aside><section class="panel mailbox-reading"><div class="panel-inner">${detail}</div></section></section>
   <details class="panel compose-panel" ${messageRecipient?"open":""}><summary>✉ Neue Nachricht schreiben</summary><div class="panel-inner"><form id="message-compose" class="message-compose"><label>Empfänger<input name="recipient" required maxlength="20" value="${escapeHtml(messageRecipient)}" placeholder="Kommandantenname"></label><label>Betreff<input name="subject" required maxlength="72" value="${escapeHtml(messageSubject)}" placeholder="Betreff"></label><label>Nachricht<textarea name="body" required maxlength="1200" rows="5"></textarea></label><button class="primary-button" type="submit">Nachricht senden</button></form></div></details>`;
 }
 function playersView() {
@@ -1358,11 +1433,11 @@ function startMission(targetId) {
 function startTransfer() {
   if (actionBusy || isSaving) return toast("Speicherung läuft – bitte gleich erneut versuchen.");
   synchronize();
-  const destinationId = $("#transfer-destination", content)?.value;
+  const destinationId = transferDraft.destination;
   const destination = state.planets.find(planet => planet.id === destinationId);
   const fleet = Object.fromEntries(Object.entries(transferSelection).filter(([key, count]) => ["cargoDrone","smallTransport","mediumTransport","largeTransport"].includes(key) && Number.isSafeInteger(count) && count > 0));
   const capacity = Object.entries(fleet).reduce((sum, [key, count]) => sum + (FLEET[key]?.cargo || 0) * count, 0);
-  const cargo = Object.fromEntries(Object.keys(RESOURCE_LABELS).map(key => [key, Math.max(0, Math.floor(Number($(`#transfer-${key}`, content)?.value) || 0))]));
+  const cargo = Object.fromEntries(Object.keys(RESOURCE_LABELS).map(key => [key, Math.max(0, Math.floor(Number(transferDraft[key]) || 0))]));
   const total = Object.values(cargo).reduce((sum, value) => sum + value, 0);
   if (!destination || destination.id === activePlanet().id || !Number.isSafeInteger(total) || !capacity || !total) return toast("Wähle Transporter, Zielwelt und Fracht.", true);
   if (total > capacity) return toast(`Fracht überschreitet die Kapazität von ${formatNumber(capacity)}.`, true);
@@ -1378,6 +1453,7 @@ function startTransfer() {
   addLog("mission", `Konvoi nach ${destination.name} gestartet.`);
   toast(`Konvoi nach ${destination.name} unterwegs.`);
   transferSelection = {};
+  transferStep = 1;
   transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
   render(); save({ quiet:true });
 }
@@ -1411,12 +1487,25 @@ content.addEventListener("input", event => {
     transferSelection[event.target.dataset.transferFleet] = Math.max(0, Math.min(Number(event.target.max), Math.floor(Number(event.target.value) || 0)));
     const capacity = Object.entries(transferSelection).reduce((sum,[key,count])=>sum+(FLEET[key]?.cargo || 0)*count,0);
     $("#transfer-capacity").textContent = formatNumber(capacity);
-    $("[data-start-transfer]").disabled = !capacity;
+    const start = $("[data-start-transfer]");
+    if (start) start.disabled = !capacity;
   }
-  if (event.target.dataset.transferResource) transferDraft[event.target.dataset.transferResource] = Math.max(0,Math.floor(Number(event.target.value)||0));
+  if (event.target.dataset.transferResource) {
+    transferDraft[event.target.dataset.transferResource] = Math.max(0,Math.floor(Number(event.target.value)||0));
+    const loaded = $("#transfer-loaded");
+    if (loaded) loaded.textContent = formatNumber(transferPlan().total);
+  }
+  if (event.target.id === "mailbox-search") mailboxSearchDraft = event.target.value;
+  if (event.target.dataset.mailSelect) {
+    if (event.target.checked) mailboxSelection.add(event.target.dataset.mailSelect);
+    else mailboxSelection.delete(event.target.dataset.mailSelect);
+    const count = $("#mailbox-selected");
+    if (count) count.textContent = mailboxSelection.size;
+  }
   if (event.target.id === "transfer-destination") transferDraft.destination = event.target.value;
 });
 content.addEventListener("submit", event => {
+  if (event.target.id === "mailbox-search-form") { event.preventDefault(); mailboxSearch = mailboxSearchDraft.trim(); mailboxSelection.clear(); render(); }
   if (event.target.id === "message-compose") { event.preventDefault(); sendPlayerMessage(event.target); }
   if (event.target.id === "player-search-form") { event.preventDefault(); const query = String(new FormData(event.target).get("query") || "").trim(); if (query.length < 3) { toast("Bitte mindestens drei Zeichen eingeben.", true); return; } searchPlayers(query); }
 });
@@ -1470,7 +1559,13 @@ content.addEventListener("click", (event) => {
     render();
     return;
   }
-  if (button.dataset.mailFilter) { mailboxFilter = button.dataset.mailFilter; render(); return; }
+  if (button.dataset.mailFilter) { mailboxFilter = button.dataset.mailFilter; mailboxSelection.clear(); render(); return; }
+  if (button.dataset.mailBulk) { applyMailboxAction(button.dataset.mailBulk); return; }
+  if (button.dataset.mailClear !== undefined) { mailboxSearch = ""; mailboxSearchDraft = ""; mailboxSelection.clear(); render(); return; }
+  if (button.dataset.openGalaxy !== undefined) { activeView = "galaxy"; render(); fetchGalaxy({force:true}); return; }
+  if (button.dataset.transferAll !== undefined) { transferSelection = Object.fromEntries(["cargoDrone","smallTransport","mediumTransport","largeTransport"].map(key=>[key,state.ships[key] || 0])); render(); return; }
+  if (button.dataset.transferBack !== undefined) { transferStep = Math.max(1,transferStep-1); render(); return; }
+  if (button.dataset.transferNext !== undefined) { const problem=transferProblem(transferStep); if(problem) return toast(problem,true); transferStep=Math.min(4,transferStep+1); render(); return; }
   if (button.dataset.mailEntry) {
     selectedMailboxEntry = button.dataset.mailEntry;
     const entry = mailboxEntries().find(item => item.key === selectedMailboxEntry);
@@ -1525,7 +1620,7 @@ content.addEventListener("click", (event) => {
     if (!planet) return;
     state.activePlanetId = planet.id;
     bindPlanetResources();
-    transferSelection = {}; transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
+    transferSelection = {}; transferStep = 1; transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
     addLog("system", `Aktive Welt auf ${planet.name} gewechselt.`);
     toast(`${planet.name} ist jetzt die aktive Welt.`);
     render();
@@ -1550,7 +1645,7 @@ $("#planet-switch").addEventListener("change", async (event) => {
   if (isSaving || actionBusy) { event.target.value = activePlanet().id; return; }
   state.activePlanetId = event.target.value;
   bindPlanetResources();
-  transferSelection = {}; transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
+  transferSelection = {}; transferStep = 1; transferDraft = {destination:"",metal:0,crystal:0,tritium:0};
   galaxyOffset = { x: 0, y: 0 };
   selectedSignalId = null;
   selectedOrbitTargetId = null;
@@ -1566,7 +1661,7 @@ setInterval(() => {
   if (!state || actionBusy || isSaving) return;
   synchronize();
   const activeElement = document.activeElement;
-  const editingText = activeElement?.matches("input, textarea, [contenteditable='true']");
+  const editingText = activeElement?.matches("input, textarea, select, [contenteditable='true']");
   const selectingText = Boolean(window.getSelection?.().toString());
   if (activeView === "galaxy") {
     resourceTicker();
