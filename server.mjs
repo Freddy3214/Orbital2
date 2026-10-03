@@ -960,10 +960,10 @@ const server = createServer(async (request, response) => {
       const current = await authenticatedAccount(request);
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const query = cleanUsername(url.searchParams.get("q") || "").toLocaleLowerCase("de-DE");
-      const players = (await allAccounts()).filter((account) => account.id !== current.account.id)
+      const players = (await allAccounts())
         .filter((account) => !query || account.username.toLocaleLowerCase("de-DE").includes(query))
-        .map((account) => ({ username: account.username, score: score(account.state), planets: account.state.planets?.length || 1 }))
-        .sort((a, b) => b.score - a.score || a.username.localeCompare(b.username, "de")).slice(0, 20);
+        .map((account) => ({ username: account.username, self: account.id === current.account.id, score: score(account.state), planets: account.state.planets?.length || 1 }))
+        .sort((a, b) => Number(b.self)-Number(a.self) || b.score - a.score || a.username.localeCompare(b.username, "de")).slice(0, 20);
       return json(response, 200, { players });
     }
     if (request.method === "POST" && url.pathname === "/api/planets/rename") {
@@ -999,7 +999,7 @@ const server = createServer(async (request, response) => {
         account.state.revision=asWholeNumber(account.state.revision)+1;
         addNotification(account.state,"system","Bauboost aktiviert","Lord Fredo hat dir 60 Minuten 20-faches Bautempo geschenkt. Gilt für Gebäude, Forschung und Schiffe. Erneutes Vergeben erneuert die 60 Minuten.");
         await persistAccountState(key,account.state);
-        return {username:account.username,until:account.state.buildBoostUntil};
+        return {username:account.username,until:account.state.buildBoostUntil,...(key===current.key?{state:account.state}:{})};
       });
       return json(response,200,{ok:true,...result});
     }
@@ -1019,7 +1019,7 @@ const server = createServer(async (request, response) => {
         addStateLog(account.state, "system", "Testlieferung: +50.000 Metall, Kristall und Tritium.");
         addNotification(account.state, "system", "Testlieferung eingetroffen", `${current.account.username} hat dir 50.000 Einheiten jeder Ressource gesendet.`);
         await persistAccountState(key, account.state);
-        return { username: account.username };
+        return { username: account.username, ...(key===current.key?{state:account.state}:{}) };
       });
       return json(response, 200, { ok: true, ...result });
     }
