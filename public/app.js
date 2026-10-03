@@ -969,7 +969,7 @@ function entityCard(kind, key, config, level, cost, requirements, queueKind) {
     ? `<div class="build-actions"><button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-build="${key}" ${disabled ? "disabled" : ""}>${action}</button><button class="secondary-button" data-build-batch="${key}" data-amount="3" ${disabled ? "disabled" : ""}>+3 planen</button></div>`
     : `<button class="${locked || noFields || atCap ? "secondary-button" : "primary-button"}" data-${kind}="${key}" ${disabled ? "disabled" : ""}>${action}</button>`;
   const levelDisplay = atCap ? `<strong>${LEVEL_CAP}</strong> · MAX` : `<strong>${level}</strong> → <strong>${target}</strong>`;
-  const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Arbeitsdauer: ${formatDuration(boostedDuration(isBuilding ? buildTime(cost, target) : researchTime(cost)))} · zzgl. vorheriger Aufträge</span>`;
+  const costDisplay = atCap ? `<span>Diese Technologie hat die feste Maximalstufe erreicht.</span>` : `${costMarkup(cost)}<br><span>Arbeitsdauer: ${formatDuration(isBuilding ? buildTime(cost, target) : researchTime(cost))} · zzgl. vorheriger Aufträge</span>`;
   return `<article class="entity-card entity-card--${kind} entity-card--${key} ${locked || noFields ? "locked" : ""}" style="--level-progress:${Math.min(100, level)}%">${entityArtMarkup(config)}<div class="entity-icon">${config.icon}</div><div class="entity-info"><h2>${escapeHtml(config.name)} ${queueNote}</h2><div class="level-meter" aria-label="Stufe ${level} von 100"><i></i></div><p>${escapeHtml(config.description)}</p><div class="meta"><span>${config.detail(level)}</span>${isBuilding ? `<span>1 Baufeld je Stufe</span>` : ""}${isBuilding && ["metalMine", "crystalMine", "tritiumSynthesizer"].includes(key) ? `<span class="negative">Energie: ${formatNumber(energyUseFor(key, Math.min(target, LEVEL_CAP)))}</span>` : ""}</div>${locked ? `<div class="unlock-note">${requirements.filter((item) => !item.ok).map((item) => item.text).join(" · ")}</div>` : noFields ? `<div class="unlock-note">Nicht genügend freie Baufelder auf ${escapeHtml(activePlanet().name)}.</div>` : ""}</div><div class="entity-action"><div class="level">Aktuell ${levelDisplay}</div><p class="cost">${costDisplay}</p>${actions}</div></article>`;
 }
 function energyUseFor(key, level) {
@@ -1053,9 +1053,28 @@ function tablePanel(title, headings, rows) {
 function rankingView() {
   return tablePanel("Rangliste · alle Kommandanten", ["Rang", "Kommandant", "Punktzahl", "Planeten"], leaderboard.map((p, i) => `<tr class="${p.commander === state.commander ? "selected" : ""}"><td>${i + 1}</td><td>${escapeHtml(p.commander)}</td><td>${formatNumber(p.score)}</td><td>${p.planets}</td></tr>`)) + `<p class="view-note">Punkte: 12 × Stufe² je Gebäude/Forschung + 4 je Schiff. Aktuell ${leaderboard.length} Spieler.</p>`;
 }
+function storageForecast(amount, capacity, hourlyRate) {
+  if (amount >= capacity) return { label: "Voll · Produktion pausiert", warning: true };
+  if (!(hourlyRate > 0)) return { label: "Keine Produktion", warning: false };
+  const ms = (capacity - amount) / hourlyRate * 3_600_000;
+  return { label: `Voll in ${formatDuration(ms)}`, warning: ms <= 24 * 3_600_000 };
+}
 function economyView() {
   const rates = production();
-  return tablePanel("Wirtschaft", ["Rohstoff", "Vorrat", "Produktion / Stunde", "Lagerkapazität"], Object.keys(RESOURCE_LABELS).map(key => `<tr><td>${RESOURCE_LABELS[key]}</td><td>${formatNumber(state.resources[key])}</td><td>+${formatNumber(rates[key])}</td><td>${formatNumber(storageCap(key))}</td></tr>`)) + `<p class="view-note">Energieeffizienz: ${Math.round(energyStats().efficiency * 100)} %. Rohstofflager und Produktion gehören zur jeweiligen Welt. Konvois transportieren Vorräte; verfügbare Schiffe werden weiterhin gemeinsam verwaltet.</p>`;
+  const detail = tablePanel(`Wirtschaft · ${escapeHtml(activePlanet().name)}`, ["Rohstoff", "Vorrat / Kapazität", "Produktion / Stunde", "Produktion / Tag", "Lagerprognose"], Object.keys(RESOURCE_LABELS).map(key => {
+    const cap = storageCap(key), amount = state.resources[key] || 0;
+    const forecast = storageForecast(amount, cap, rates[key]);
+    return `<tr><td>${resourceIconMarkup(key)} ${RESOURCE_LABELS[key]}</td><td>${formatNumber(amount)} / ${formatNumber(cap)}</td><td>+${formatNumber(rates[key])}</td><td>+${formatNumber(rates[key] * 24)}</td><td class="${forecast.warning ? "warning" : ""}">${forecast.label}</td></tr>`;
+  }));
+  const totals = { metal: 0, crystal: 0, tritium: 0 };
+  const worlds = state.planets.map(planet => {
+    const energy = energyStats(planet), output = production(planet), reserves = planetResources(planet);
+    for (const key of Object.keys(RESOURCE_LABELS)) totals[key] += output[key];
+    const full = Object.keys(RESOURCE_LABELS).filter(key => reserves[key] >= storageCap(key, planetBuildings(planet)[`${key}Storage`]));
+    return `<tr class="${planet.id === state.activePlanetId ? "selected" : ""}"><td>${escapeHtml(planet.name)}${planet.id === state.activePlanetId ? " · aktiv" : ""}</td><td class="${energy.efficiency < 1 ? "warning" : "positive"}">${Math.round(energy.efficiency * 100)} %</td><td>${formatNumber(energy.supply)} / ${formatNumber(energy.demand)}</td>${Object.keys(RESOURCE_LABELS).map(key => `<td>${formatNumber(output[key])} / ${formatNumber(output[key] * 24)}</td>`).join("")}<td class="${full.length ? "warning" : ""}">${full.length ? `Volle Lager: ${full.map(key => RESOURCE_LABELS[key]).join(", ")}` : "Lager frei"}</td></tr>`;
+  });
+  worlds.push(`<tr><th>Gesamtes Imperium</th><td>—</td><td>—</td>${Object.keys(RESOURCE_LABELS).map(key => `<th>${formatNumber(totals[key])} / ${formatNumber(totals[key] * 24)}</th>`).join("")}<td>Stunde / Tag</td></tr>`);
+  return detail + `<p class="view-note">Prognose bei unveränderter Energieversorgung, ohne neue Aufträge oder Konvois. Volle Lager stoppen die weitere Einlagerung; vorhandene Vorräte bleiben erhalten.</p>` + tablePanel("Planetenvergleich", ["Welt", "Effizienz", "Energie + / −", "Metall h / Tag", "Kristall h / Tag", "Tritium h / Tag", "Lagerstatus"], worlds) + `<p class="view-note">Angezeigt wird die mögliche Produktion; bei vollen Lagern wird nichts mehr eingelagert. Konvois transportieren Vorräte zwischen eigenen Welten.</p>`;
 }
 function statisticsView() {
   const categories = [["Gebäude", state.planets.flatMap((planet) => Object.values(planetBuildings(planet))).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
@@ -1094,10 +1113,15 @@ function fleetsView() {
   return `<section class="view-heading"><div><span class="eyebrow">FLOTTENKOMMANDO</span><h1>Flottenbefehle</h1><p>Transporte Schritt für Schritt planen. Für Spionage und Angriffe wählst du einen Planeten auf der Sternenkarte.</p></div><button class="secondary-button" data-open-galaxy>Sternenkarte öffnen</button></section>` + convoy + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><details class="panel fleet-inventory"><summary>Gesamte Flotte anzeigen</summary>${tablePanel("Flottenbestand",["Schiff","Verfügbar"],Object.entries(SHIPS).filter(([,item])=>!item.isDefense).map(([key,item])=>`<tr><td>${escapeHtml(item.name)}</td><td>${formatNumber(state.ships[key])}</td></tr>`))}</details><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
 }
 function techtreeView() {
-  return tablePanel("Technologiebaum", ["Technologie / Einheit", "Voraussetzungen", "Status"], [...Object.values(BUILDINGS), ...Object.values(RESEARCH), ...Object.values(SHIPS)].map(item => {
-    const requirements = item.requires ? item.requires(state) : [];
-    return `<tr><td>${item.name}</td><td>${requirements.map(r=>`${r.ok ? "✓" : "○"} ${escapeHtml(r.text)}`).join("<br>") || "Keine"}</td><td>${requirements.every(r=>r.ok) ? "Freigeschaltet" : "Gesperrt"}</td></tr>`;
-  }));
+  const groups = [["Gebäude & Infrastruktur", Object.values(BUILDINGS)], ["Forschungsprogramme", Object.values(RESEARCH)], ["Flotteneinheiten", Object.values(SHIPS).filter(item => !item.isDefense)], ["Planetare Verteidigung", Object.values(SHIPS).filter(item => item.isDefense)]];
+  return `<section class="view-heading"><div><span class="eyebrow">ENTWICKLUNGSPLAN</span><h1>Technologiebaum</h1><p>Vier Bereiche statt einer langen Liste. Häkchen zeigen erfüllte Voraussetzungen; offene Punkte zeigen den nächsten Ausbauschritt auf der aktiven Welt.</p></div></section>` + groups.map(([name, items]) => {
+    const ready = items.filter(item => (item.requires ? item.requires(state) : []).every(r => r.ok)).length;
+    return tablePanel(`${name} · ${ready}/${items.length} freigeschaltet`, ["Technologie / Einheit", "Voraussetzungen", "Status"], items.map(item => {
+      const requirements = item.requires ? item.requires(state) : [];
+      const available = requirements.every(r => r.ok);
+      return `<tr><td>${escapeHtml(item.name)}</td><td>${requirements.map(r => `<span class="${r.ok ? "positive" : "warning"}">${r.ok ? "✓" : "○"} ${escapeHtml(r.text)}</span>`).join("<br>") || "Keine"}</td><td class="${available ? "positive" : "warning"}">${available ? "Freigeschaltet" : "Voraussetzungen offen"}</td></tr>`;
+    }));
+  }).join("");
 }
 function helpView() {
   return `<section class="view-heading"><h1>Hilfe & Bildnachweise</h1></section><section class="panel panel-inner"><h2>Sternenkarte</h2><p>Jeder weiße Stern ist ein auswählbares Ziel. Freie Welten lassen sich mit einem Kolonieschiff besiedeln. Besetzte Welten können ausgespäht und mit gültigem Spionagebericht angegriffen werden. Die Größe freier Welten (96–390 Felder) bleibt bis zur Besiedlung verborgen.</p><h2>Grafikstil</h2><p>Die Anlagen-, Forschungs-, Verteidigungs- und Flottengrafiken wurden als eigenständige Sci-Fi-Illustrationen für Orbital Foundry erstellt. Sie greifen die Atmosphäre klassischer Weltraum-Aufbauspiele auf, ohne Originalgrafiken anderer Spiele zu verwenden.</p><p>Die Bildatlanten werden direkt vom Spielserver geladen; externe Stockfoto-Anbieter werden dafür nicht mehr benötigt.</p></section>`;
@@ -1684,4 +1708,3 @@ setInterval(() => {
 }, 1000);
 document.addEventListener("visibilitychange", () => { if (state && document.visibilityState === "hidden") save({ quiet: true }); });
 window.addEventListener("pagehide", () => { if (state) save({ quiet: true }); });
-
