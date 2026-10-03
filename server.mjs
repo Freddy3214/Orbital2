@@ -106,7 +106,7 @@ function boostFinish(duration, at, until) {
 }
 function applyBuildBoost(state, now) {
   const oldUntil = Number(state.buildBoostUntil) || 0;
-  const until = now + 20*60_000;
+  const until = now + 60*60_000;
   const queues = [...state.planets.flatMap(p=>[p.buildingQueue?.[0],p.shipQueue]),state.queues?.research];
   for (const queue of queues.filter(Boolean)) {
     if (queue.completesAt <= now) continue;
@@ -940,7 +940,7 @@ const server = createServer(async (request, response) => {
         if (!account) fail("Account nicht gefunden.",404);
         applyBuildBoost(account.state,Date.now());
         account.state.revision=asWholeNumber(account.state.revision)+1;
-        addNotification(account.state,"system","Bauboost aktiviert","Lord Fredo hat dir 20 Minuten 20-faches Bautempo geschenkt. Gilt für Gebäude, Forschung und Schiffe. Erneutes Vergeben erneuert die 20 Minuten.");
+        addNotification(account.state,"system","Bauboost aktiviert","Lord Fredo hat dir 60 Minuten 20-faches Bautempo geschenkt. Gilt für Gebäude, Forschung und Schiffe. Erneutes Vergeben erneuert die 60 Minuten.");
         await persistAccountState(key,account.state);
         return {username:account.username,until:account.state.buildBoostUntil};
       });
@@ -1054,3 +1054,4 @@ storageReady.then(async () => {
   console.error("Database initialization failed", error);
   process.exit(1);
 });
+
