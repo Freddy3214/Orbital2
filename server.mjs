@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
 import { FLEET, DEFENSE } from "./public/units.js";
+import { requestLocale } from "./locale.mjs";
 
 const scrypt = promisify(scryptCallback);
 const root = dirname(fileURLToPath(import.meta.url));
@@ -434,6 +435,7 @@ function publicGalaxyRecord(account, observer = null) {
 }
 function galaxySystems(contacts, observer) {
   const cellSize = 16;
+  const orbitKey = contact => contact.id.includes(":frontier-") ? contact.id.slice(contact.id.indexOf(":") + 1) : contact.id;
   const buckets = new Map();
   for (const contact of contacts) {
     const cellX = Math.floor(Math.max(0, Math.min(GALAXY_SPAN - .001, contact.position.x)) / cellSize);
@@ -444,7 +446,7 @@ function galaxySystems(contacts, observer) {
   }
   const systems = [];
   for (const [key, bucket] of buckets) {
-    const ordered = [...bucket.contacts].sort((a, b) => stableHash(a.id) - stableHash(b.id));
+    const ordered = [...bucket.contacts].sort((a, b) => stableHash(orbitKey(a)) - stableHash(orbitKey(b)));
     for (let offset = 0; offset < ordered.length; offset += 13) {
       const chunk = ordered.slice(offset, offset + 13);
       const part = Math.floor(offset / 13);
@@ -461,7 +463,7 @@ function galaxySystems(contacts, observer) {
       if (!positionIsVisible(observer, position)) position = { ...visible[0].position };
       const slots = Array.from({ length: 13 }, (_, index) => ({ position: index + 1, empty: true }));
       for (const contact of chunk) {
-        let index = stableHash(`orbit:${contact.id}`) % 13;
+        let index = stableHash(`orbit:${orbitKey(contact)}`) % 13;
         while (!slots[index].empty) index = (index + 1) % 13;
         slots[index] = {
           position: index + 1,
@@ -863,12 +865,44 @@ async function serveStatic(pathname, request, response) {
   } catch { json(response, 404, { error: "Not found" }); }
 }
 
+function demoAccount(activeId = "demo-home") {
+  const state = defaultState("Demo Commander", {x:45,y:65});
+  const base = structuredClone(state.planets[0]);
+  state.planets = [
+    {...structuredClone(base),id:"demo-home",name:"Aster Prime",homeworld:true,position:{x:45,y:65},type:"temperate"},
+    {...structuredClone(base),id:"demo-colony",name:"Helios Outpost",homeworld:false,position:{x:95,y:85},type:"arid"},
+    {...structuredClone(base),id:"demo-third",name:"Nereid Haven",homeworld:false,position:{x:140,y:135},type:"ocean"},
+  ];
+  state.activePlanetId = state.planets.some(p=>p.id===activeId)?activeId:"demo-home";
+  for(const planet of state.planets){planet.resources={metal:18500,crystal:8200,tritium:4600};}
+  state.resources=state.planets.find(p=>p.id===state.activePlanetId).resources;
+  state.research.deepSpaceSensors=3; state.ships.smallTransport=4; state.ships.interceptor=3;
+  const now=Date.now();
+  state.missions=[
+    {id:"demo-transport",kind:"transport",sourcePlanetId:"demo-home",destinationPlanetId:"demo-colony",departedAt:now-30000,arrivesAt:now+90000,duration:120000,phase:"outgoing",fleet:{smallTransport:2},cargo:{metal:2500,crystal:1200,tritium:600}},
+    {id:"demo-return",kind:"transport",sourcePlanetId:"demo-home",destinationPlanetId:"demo-third",departedAt:now-150000,arrivesAt:now-30000,returnAt:now+90000,duration:120000,phase:"returning",fleet:{smallTransport:1},cargo:{}},
+  ];
+  return {id:"demo",username:"Demo Commander",state};
+}
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   try {
     await storageReady;
     if (request.method === "GET" && url.pathname === "/health") {
       return json(response, 200, { ok: true, storage: pool ? "postgres" : "file" });
+    }
+    if (request.method === "GET" && url.pathname === "/api/locale") {
+      response.setHeader("Cache-Control", "private, no-store");
+      return json(response, 200, requestLocale(request));
+    }
+    if (request.method === "GET" && url.pathname === "/api/demo") {
+      return json(response,200,{demo:true,user:{username:"Demo Commander"},state:demoAccount().state,capabilities:{testGrant:false}});
+    }
+    if (request.method === "GET" && url.pathname === "/api/demo/galaxy") {
+      const observer=activeGalaxyAccount(demoAccount(url.searchParams.get("planet")));
+      const own=observer.state.planets.map(focusPlanet=>publicGalaxyRecord({...observer,focusPlanet},observer));
+      const contacts=[...own,...frontierSites.map(site=>({...site,distance:galaxyDistance(galaxyPosition(observer),site.position)}))];
+      return json(response,200,{demo:true,contacts:contacts.filter(contact=>contact.own||positionIsVisible(observer,contact.position)),systems:galaxySystems(contacts,observer),sensorOrigins:sensorOrigins(observer),origin:galaxyPosition(observer),radius:sensorRange(observer),span:GALAXY_SPAN,updatedAt:Date.now()});
     }
     if (request.method === "POST" && url.pathname === "/api/auth/register") {
       const body = await readBody(request);
@@ -1061,7 +1095,7 @@ const server = createServer(async (request, response) => {
       const result = await mutate(() => executeRaid(current.key, targetId, spy ? { probes: body.probes } : body.fleet || {}, spy));
       return json(response, 200, result);
     }
-    if (request.method === "GET") return serveStatic(url.pathname, request, response);
+    if (request.method === "GET") return serveStatic(url.pathname === "/demo" ? "/" : url.pathname, request, response);
     return json(response, 405, { error: "Method not allowed" });
   } catch (error) {
     console.error(error);
