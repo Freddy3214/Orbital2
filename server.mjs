@@ -33,7 +33,7 @@ function fail(message, status = 400) { throw Object.assign(new Error(message), {
 const SPY_REPORT_LIFETIME = 1000 * 60 * 60 * 2;
 const mimeTypes = {
   ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
+  ".json": "application/json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp",
 };
 
 const freshBuildings = (homeworld = false) => ({
@@ -359,7 +359,7 @@ async function colonizeSite(key, targetId) {
   if (!site) fail("Keine besiedelbare Welt.", 404);
   const apply = (account, accounts) => {
     if (accounts.some(a => a.state.planets.some(p => p.id === targetId))) fail("Diese Welt wurde bereits besiedelt.", 409);
-    if (galaxyDistance(galaxyPosition(activeGalaxyAccount(account)), site.position) > sensorRange(account)) fail("Ziel außerhalb der Sichtweite.", 403);
+    if (!positionIsVisible(account, site.position)) fail("Ziel außerhalb der Sichtweite.", 403);
     if (!asWholeNumber(account.state.ships.colonyShip)) fail("Ein Kolonieschiff ist erforderlich.", 400);
     if (account.state.planets.length >= MAX_PLANETS) fail(`Maximal ${MAX_PLANETS} Welten möglich.`, 400);
     const types = [["temperate","Gemäßigte Welt"],["arid","Wüstenwelt"],["ocean","Ozeanwelt"],["ice","Eiswelt"],["volcanic","Vulkanwelt"]];
@@ -400,8 +400,20 @@ function sensorRange(account) {
   const level = asWholeNumber(account.state?.research?.deepSpaceSensors);
   return Math.min(340, 14 + level * 3.26);
 }
+function sensorOrigins(account) {
+  return (account.state?.planets || []).map(planet => ({
+    planetId: planet.id, name: String(planet.name || "Kolonie").slice(0, 36),
+    position: galaxyPosition({ ...account, focusPlanet: planet }),
+    radius: sensorRange(account), active: planet.id === account.state.activePlanetId,
+    homeworld: Boolean(planet.homeworld),
+  }));
+}
+function positionIsVisible(account, position) {
+  return sensorOrigins(account).some(origin =>
+    Math.hypot(origin.position.x - position.x, origin.position.y - position.y) <= origin.radius);
+}
 function targetIsVisible(attacker, defender) {
-  return galaxyDistance(galaxyPosition(attacker), galaxyPosition(defender)) <= sensorRange(attacker);
+  return positionIsVisible(attacker, galaxyPosition(defender));
 }
 function recentSpyReport(state, targetId) {
   const now = Date.now();
@@ -414,6 +426,8 @@ function publicGalaxyRecord(account, observer = null) {
     id: signalId(account),
     signature: String(planet.name || "Unbenannte Signatur").slice(0, 36),
     owner: String(account.username || "Unbekannt").slice(0, 36),
+    own: account.id === observer?.id,
+    planetId: account.id === observer?.id ? planet.id : undefined,
     position,
     distance: observer ? galaxyDistance(galaxyPosition(observer), position) : null,
   };
@@ -438,10 +452,13 @@ function galaxySystems(contacts, observer) {
       const seed = stableHash(`orbital-system:${systemKey}`);
       const jitterX = (seed % 801) / 100 - 4;
       const jitterY = (Math.floor(seed / 809) % 801) / 100 - 4;
-      const position = {
+      let position = {
         x: Math.max(3, Math.min(GALAXY_SPAN - 3, bucket.cellX * cellSize + cellSize / 2 + jitterX)),
         y: Math.max(3, Math.min(GALAXY_SPAN - 3, bucket.cellY * cellSize + cellSize / 2 + jitterY)),
       };
+      const visible = chunk.filter(contact => contact.own || positionIsVisible(observer, contact.position));
+      if (!visible.length) continue;
+      if (!positionIsVisible(observer, position)) position = { ...visible[0].position };
       const slots = Array.from({ length: 13 }, (_, index) => ({ position: index + 1, empty: true }));
       for (const contact of chunk) {
         let index = stableHash(`orbit:${contact.id}`) % 13;
@@ -452,21 +469,27 @@ function galaxySystems(contacts, observer) {
           name: contact.signature,
           owner: contact.free ? null : contact.owner,
           free: Boolean(contact.free),
+          own: Boolean(contact.own), planetId: contact.planetId,
           empty: false,
         };
       }
-      const occupiedCount = chunk.filter((contact) => !contact.free).length;
-      const freeCount = chunk.length - occupiedCount;
+      for (let index = 0; index < slots.length; index++) {
+        const slot = slots[index];
+        if (!slot.empty && !visible.some(contact => contact.id === slot.targetId))
+          slots[index] = { position: slot.position, empty: true, unexplored: true };
+      }
+      const occupiedCount = visible.filter(contact => !contact.free).length;
+      const freeCount = visible.length - occupiedCount;
       systems.push({
         id: `system-${systemKey}`,
         signature: `Sektor ${String(100 + seed % 900).padStart(3, "0")}-${String.fromCharCode(65 + (Math.floor(seed / 997) % 26))}`,
         position,
         distance: galaxyDistance(galaxyPosition(observer), position),
-        planetCount: chunk.length,
+        planetCount: visible.length,
         occupiedCount,
         freeCount,
-        luminosity: Math.min(1, .34 + chunk.length * .075),
-        starSize: Math.min(62, 30 + chunk.length * 3),
+        luminosity: Math.min(1, .34 + visible.length * .075),
+        starSize: Math.min(38, 18 + visible.length * 2),
         slots,
       });
     }
@@ -1011,13 +1034,17 @@ const server = createServer(async (request, response) => {
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const observer = activeGalaxyAccount(current.account);
       const accounts = await allAccounts();
-      const contacts = accounts.filter((account) => account.id !== current.account.id)
-        .flatMap((account) => account.state.planets.map((focusPlanet) => ({ ...account, focusPlanet })))
-        .filter((account) => targetIsVisible(observer, account)).map((account) => publicGalaxyRecord(account, observer))
-        .sort((a, b) => a.distance - b.distance).slice(0, 200);
+      const allContacts = accounts.flatMap(account => account.state.planets
+        .map(focusPlanet => publicGalaxyRecord({ ...account, focusPlanet }, observer)));
       const claimed = new Set(accounts.flatMap(a => a.state.planets.map(p => p.id)));
-      contacts.push(...frontierSites.filter(site => !claimed.has(site.id)).map(site => ({ ...site, distance: galaxyDistance(galaxyPosition(observer), site.position) })).filter(site => site.distance <= sensorRange(observer)));
-      return json(response, 200, { contacts, systems: galaxySystems(contacts, observer), origin: galaxyPosition(observer), radius: sensorRange(observer), span: GALAXY_SPAN, updatedAt: Date.now() });
+      allContacts.push(...frontierSites.filter(site => !claimed.has(site.id)).map(site => ({
+        ...site, distance: galaxyDistance(galaxyPosition(observer), site.position),
+      })));
+      const contacts = allContacts.filter(contact => contact.own || positionIsVisible(observer, contact.position))
+        .sort((a, b) => a.distance - b.distance);
+      return json(response, 200, { contacts, systems: galaxySystems(allContacts, observer),
+        sensorOrigins: sensorOrigins(observer), origin: galaxyPosition(observer),
+        radius: sensorRange(observer), span: GALAXY_SPAN, updatedAt: Date.now() });
     }
     if (request.method === "POST" && url.pathname === "/api/colonize") {
       const current = await authenticatedAccount(request);
@@ -1047,11 +1074,11 @@ setInterval(() => {
   for (const [id, session] of sessions) if (session.expiresAt <= now) sessions.delete(id);
 }, 1000 * 60 * 15).unref();
 
+export { server };
 storageReady.then(async () => {
   await applyLordFredoCredit();
-  server.listen(port, () => console.log(`Orbital Foundry is live at http://localhost:${port}`));
+  server.listen(port, process.env.HOST || "0.0.0.0", () => console.log(`Orbital Foundry is live at http://localhost:${port}`));
 }).catch((error) => {
   console.error("Database initialization failed", error);
   process.exit(1);
 });
-
