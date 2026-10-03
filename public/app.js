@@ -1,4 +1,6 @@
 import { FLEET, DEFENSE } from "./units.js";
+import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js";
+const IS_DEMO = location.pathname === "/demo";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const content = $("#content");
@@ -86,7 +88,7 @@ const RESEARCH = {
   deepSpaceSensors: {
     icon: "◎", image: "/assets/sensor-array.svg", name: "Tiefraumsensorik", factor: 1.65, base: { metal: 160, crystal: 240, tritium: 60 },
     description: "Erweitert den sichtbaren Raum und verbessert die Detailtiefe der Spionageberichte.",
-    detail: (level) => `Sichtkreis: ${(14 + Math.min(100, level) * .78).toFixed(1)} Sektoren`,
+    detail: (level) => `Sichtkreis: ${Math.min(340, 14 + Math.min(100, level) * 3.26).toFixed(1)} Sektoren`,
     requires: (s) => [requirement(s.buildings.researchLab >= 1, "Forschungslabor Stufe 1")],
   },
   energyTech: {
@@ -233,6 +235,8 @@ let lastLeaderboardFetch = 0;
 let isSaving = false;
 let authMode = "register";
 let galaxyIntel = [];
+let galaxySensorOrigins = [];
+let fleetStatusFilter = "all";
 let galaxyOrigin = { x: 50, y: 50 };
 let galaxyRadius = 14;
 let galaxySpan = 220;
@@ -280,7 +284,7 @@ const PLANET_TYPES = {
 
 function requirement(ok, text) { return { ok, text }; }
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]); }
-function formatNumber(value) { return new Intl.NumberFormat("de-DE", { maximumFractionDigits: 0 }).format(Math.max(0, Math.floor(Number(value) || 0))); }
+function formatNumber(value) { return new Intl.NumberFormat(locale(), { maximumFractionDigits: 0 }).format(Math.max(0, Math.floor(Number(value) || 0))); }
 function formatDuration(milliseconds) {
   const seconds = Math.max(0, Math.ceil(milliseconds / 1000));
   if (seconds < 60) return `${seconds}s`;
@@ -292,10 +296,10 @@ function formatDuration(milliseconds) {
   return `${days}d ${hours % 24}h`;
 }
 function formatClock(timestamp) {
-  return new Intl.DateTimeFormat("de-DE", { hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(locale(), { hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
 }
 function formatDateTime(timestamp) {
-  return new Intl.DateTimeFormat("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(locale(), { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
 }
 function getCost(config, targetLevel) {
   const cost = {};
@@ -668,6 +672,7 @@ function synchronize() {
 }
 
 async function save({ quiet = false } = {}) {
+  if (IS_DEMO) return true;
   if (!state || isSaving) return false;
   isSaving = true;
   const status = $("#save-state");
@@ -708,6 +713,7 @@ async function save({ quiet = false } = {}) {
 }
 
 async function fetchLeaderboard() {
+  if (IS_DEMO) return;
   if (!state || Date.now() - lastLeaderboardFetch < 12_000) return;
   lastLeaderboardFetch = Date.now();
   try {
@@ -723,15 +729,16 @@ async function fetchGalaxy({ force = false } = {}) {
   galaxyLoading = true;
   lastGalaxyFetch = Date.now();
   try {
-    const response = await fetch("/api/galaxy", { credentials: "same-origin" });
+    const response = await fetch(IS_DEMO ? `/api/demo/galaxy?planet=${encodeURIComponent(state.activePlanetId)}` : "/api/galaxy", { credentials: "same-origin" });
     if (!response.ok) throw new Error("Sensorverbindung nicht verfügbar.");
     const payload = await response.json();
     galaxyIntel = Array.isArray(payload.systems) ? payload.systems : [];
+    galaxySensorOrigins = Array.isArray(payload.sensorOrigins) ? payload.sensorOrigins : [];
     galaxyOrigin = payload.origin;
     galaxyRadius = payload.radius;
     galaxySpan = Number(payload.span) || 220;
     if (!galaxyMapInitialized) {
-      galaxyOffset = { x: galaxySpan / 2 - galaxyOrigin.x, y: galaxySpan / 2 - galaxyOrigin.y };
+      fitGalaxyEmpire();
       galaxyMapInitialized = true;
     }
     galaxyError = "";
@@ -802,12 +809,25 @@ function setGateMode(mode) {
   $("#start-button").innerHTML = login ? "Anmelden <span>→</span>" : "Account erstellen <span>→</span>";
   $("#password-input").autocomplete = login ? "current-password" : "new-password";
 }
+function themePreferenceKey() { return `orbital-foundry-theme:${String(state?.commander || "").toLowerCase()}`; }
+function applyTheme(value) {
+  const theme = ["sand", "nebula", "void"].includes(value) ? value : "sand";
+  document.documentElement.dataset.theme = theme;
+  $("#theme-switch").value = theme;
+  return theme;
+}
+function restoreTheme() {
+  let theme = "sand";
+  try { theme = localStorage.getItem(themePreferenceKey()) || "sand"; } catch {}
+  applyTheme(theme);
+}
 function openGame(payload) {
   state = payload.state;
   canGrantTestResources = Boolean(payload.capabilities?.testGrant);
   ensureStateShape();
   synchronize();
   $("#commander-name").textContent = state.commander;
+  restoreTheme();
   $("#commander-gate").classList.add("hidden");
   $("#app").classList.remove("is-hidden");
   render();
@@ -834,12 +854,13 @@ async function enterGame(name, password) {
 }
 async function restoreSession() {
   try {
-    const response = await fetch("/api/session", { credentials: "same-origin" });
+    const response = await fetch(IS_DEMO ? "/api/demo" : "/api/session", { credentials: "same-origin" });
     if (!response.ok) return;
     openGame(await response.json());
   } catch { /* The access screen remains visible if the server is unavailable. */ }
 }
 async function logout() {
+  if (IS_DEMO) { location.href = "/"; return; }
   await save({ quiet: true });
   try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch { /* Local UI can still close the session. */ }
   state = null;
@@ -903,7 +924,7 @@ function notificationMarkup() {
   const unreadNotices = (state.notifications || []).filter(notice => !notice.read).length;
   if (!notices.length) return `<div class="empty-state"><strong>Keine neuen Warnungen</strong>Sensorik und Ereignisprotokoll überwachen deinen Sektor.</div>`;
   const icons = { scan: "◉", combat: "⚠", mission: "↗", system: "◎" };
-  return `<p>${unreadNotices ? `${unreadNotices} neue Meldungen · im Postfach lesen` : "Alle Meldungen gelesen"}</p><div class="log-list notification-list">${notices.map((notice) => `<article class="log-row ${escapeHtml(notice.kind || "system")} ${notice.priority === "high" && !notice.read ? "notification-high" : ""}"><time>${new Date(notice.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</time><span><b>${icons[notice.kind] || "◎"} ${escapeHtml(notice.title || "Meldung")} · ${notice.read ? "Gelesen" : "Neu"}</b><small>${escapeHtml(notice.text || "")}</small></span></article>`).join("")}</div>`;
+  return `<p>${unreadNotices ? `${unreadNotices} neue Meldungen · im Postfach lesen` : "Alle Meldungen gelesen"}</p><div class="log-list notification-list">${notices.map((notice) => `<article class="log-row ${escapeHtml(notice.kind || "system")} ${notice.priority === "high" && !notice.read ? "notification-high" : ""}"><time>${new Date(notice.at).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" })}</time><span><b>${icons[notice.kind] || "◎"} ${escapeHtml(notice.title || "Meldung")} · ${notice.read ? "Gelesen" : "Neu"}</b><small>${escapeHtml(notice.text || "")}</small></span></article>`).join("")}</div>`;
 }
 
 function overviewView() {
@@ -1010,7 +1031,11 @@ function shipyardView() {
 function missionStatusMarkup() {
   if (!state.missions.length) return `<div class="empty-state"><strong>Keine Flotten unterwegs</strong>Baue eine Frachtdrohne und beginne deine erste Bergung.</div>`;
   const now = Date.now();
-  return `<div class="fleet-operations">${state.missions.map((mission) => {
+  const returning = state.missions.filter(mission => mission.phase === "returning").length;
+  const missions = state.missions.filter(mission => fleetStatusFilter === "all" || (mission.phase === "returning" ? "returning" : "outgoing") === fleetStatusFilter)
+    .sort((a,b) => (a.phase === "returning" ? a.returnAt || a.arrivesAt + a.duration / (a.kind === "transport" ? 1 : 2) : a.arrivesAt) - (b.phase === "returning" ? b.returnAt || b.arrivesAt + b.duration / (b.kind === "transport" ? 1 : 2) : b.arrivesAt));
+  const filters = `<div class="fleet-filter" aria-label="Flottenbewegungen filtern">${[["all","Alle",state.missions.length],["outgoing","Hinflug",state.missions.length-returning],["returning","Rückflug",returning]].map(([key,label,count])=>`<button class="secondary-button ${fleetStatusFilter===key?"active":""}" data-fleet-filter="${key}" aria-pressed="${fleetStatusFilter===key}">${label} <b>${count}</b></button>`).join("")}<span>Nächstes Ereignis zuerst</span></div>`;
+  return filters + `<div class="fleet-operations">${missions.map((mission) => {
     const destination = mission.kind === "transport" ? state.planets.find(planet => planet.id === mission.destinationPlanetId) : null;
     const target = (destination ? {...destination,name:`Transport · ${state.planets.find(p=>p.id===mission.sourcePlanetId)?.name || "Startwelt"} → ${destination.name}`} : null) || MISSIONS[mission.targetId] || { name: mission.targetId, coordinates: "Unbekannt" };
     const returnAt = mission.returnAt || mission.arrivesAt + mission.duration / (mission.kind === "transport" ? 1 : 2);
@@ -1018,7 +1043,11 @@ function missionStatusMarkup() {
     const outboundProgress = outboundDone ? 100 : Math.min(100, Math.max(0, (now - mission.departedAt) / (mission.arrivesAt - mission.departedAt) * 100));
     const returnProgress = outboundDone ? Math.min(100, Math.max(0, (now - mission.arrivesAt) / (returnAt - mission.arrivesAt) * 100)) : 0;
     const fleet = Object.entries(mission.fleet || {}).filter(([,count]) => count > 0).map(([key,count]) => `${count}× ${SHIPS[key]?.name || key}`).join(" · ");
-    return `<section class="fleet-operation"><div class="fleet-operation-head"><div><strong>${escapeHtml(target.name)}</strong><span>${escapeHtml(target.coordinates || "")}</span></div><small>${escapeHtml(fleet || "Flottenverband")}</small></div><div class="queue-row ${outboundDone ? "completed-leg" : ""}"><div class="queue-top"><strong>Hinflug <span>· ${outboundDone ? "angekommen" : "unterwegs"}</span></strong><span>${outboundDone ? `Ankunft ${formatClock(mission.arrivesAt)}` : `${formatDuration(mission.arrivesAt - now)} · ${formatClock(mission.arrivesAt)}`}</span></div><div class="progress"><i style="width:${outboundProgress}%"></i></div></div><div class="queue-row return-leg ${outboundDone ? "active-return" : "waiting"}"><div class="queue-top"><strong>Rückflug <span>· ${outboundDone ? "unterwegs" : "geplant"}</span></strong><span>${outboundDone ? `${formatDuration(returnAt - now)} · ${formatClock(returnAt)}` : `Rückkehr ca. ${formatClock(returnAt)}`}</span></div><div class="progress"><i style="width:${returnProgress}%"></i></div></div></section>`;
+    const sourceName = state.planets.find(planet => planet.id === mission.sourcePlanetId)?.name || activePlanet().name;
+    const destinationName = destination?.name || MISSIONS[mission.targetId]?.name || mission.targetId;
+    const routeProgress = outboundDone ? 100 - returnProgress : outboundProgress;
+    const route = `<div class="flight-route ${outboundDone ? "returning" : ""}"><span>${escapeHtml(sourceName)}</span><div class="flight-route-track"><i style="left:${routeProgress}%">${outboundDone ? "◀" : "▶"}</i></div><span>${escapeHtml(destinationName)}</span></div><div class="flight-manifest"><span class="flight-phase">${outboundDone ? "RÜCKKEHR" : mission.kind === "transport" ? "TRANSPORT" : "EXPEDITION"}</span>${Object.entries(mission.cargo || mission.loot || {}).filter(([key,count])=>RESOURCE_LABELS[key] && count>0).map(([key,count])=>`<span>${RESOURCE_LABELS[key]}: ${formatNumber(count)}</span>`).join("")}</div>`;
+    return `<section class="fleet-operation"><div class="fleet-operation-head"><div><strong>${escapeHtml(target.name)}</strong><span>${escapeHtml(target.coordinates || "")}</span></div><small>${escapeHtml(fleet || "Flottenverband")}</small></div>${route}<div class="queue-row ${outboundDone ? "completed-leg" : ""}"><div class="queue-top"><strong>Hinflug <span>· ${outboundDone ? "angekommen" : "unterwegs"}</span></strong><span>${outboundDone ? `Ankunft ${formatClock(mission.arrivesAt)}` : `${formatDuration(mission.arrivesAt - now)} · ${formatClock(mission.arrivesAt)}`}</span></div><div class="progress"><i style="width:${outboundProgress}%"></i></div></div><div class="queue-row return-leg ${outboundDone ? "active-return" : "waiting"}"><div class="queue-top"><strong>Rückflug <span>· ${outboundDone ? "unterwegs" : "geplant"}</span></strong><span>${outboundDone ? `${formatDuration(returnAt - now)} · ${formatClock(returnAt)}` : `Rückkehr ca. ${formatClock(returnAt)}`}</span></div><div class="progress"><i style="width:${returnProgress}%"></i></div></div></section>`;
   }).join("")}</div>`;
 }
 function currentReport(id) {
@@ -1132,22 +1161,37 @@ content.addEventListener("error", (event) => {
 function fleetSelector() {
   return `<details class="fleet-selector" open><summary>Einsatzflotte zusammenstellen</summary>${Object.entries(FLEET).map(([key,item])=>`<label><span>${SHIPS[key].name} <small>(${state.ships[key]||0} verfügbar)</small></span><input type="number" inputmode="numeric" min="0" max="${state.ships[key]||0}" step="1" value="${raidSelection[key]||0}" data-fleet-key="${key}" aria-label="${SHIPS[key].name} einsetzen"></label>`).join("")}<p>Nur die gewählten Schiffe starten. PvP-Angriffe werden derzeit sofort aufgelöst.</p></details>`;
 }
+function fitGalaxyEmpire() {
+  const origins = galaxySensorOrigins.length ? galaxySensorOrigins : [{ position: galaxyOrigin, radius: galaxyRadius }];
+  const minX = Math.min(...origins.map(o => o.position.x - o.radius));
+  const maxX = Math.max(...origins.map(o => o.position.x + o.radius));
+  const minY = Math.min(...origins.map(o => o.position.y - o.radius));
+  const maxY = Math.max(...origins.map(o => o.position.y + o.radius));
+  const size = Math.max(44, maxX - minX, maxY - minY) * 1.25;
+  galaxyZoom = Math.max(.5, Math.min(5, galaxySpan / size));
+  galaxyOffset = { x: (minX + maxX) / 2 - galaxyOrigin.x, y: (minY + maxY) / 2 - galaxyOrigin.y };
+}
 function galaxyInspector() {
   const system = galaxyIntel.find((contact) => contact.id === selectedSignalId);
   if (!system) return `<aside class="galaxy-inspector"><span class="eyebrow">SYSTEMSCAN</span><div class="scanner-symbol">◎</div><h2>Wähle einen Stern</h2><p>Jeder große Lichtpunkt ist ein Sternsystem. Seine Helligkeit zeigt an, wie viele freie oder bewohnte Welten die Sensoren dort erfassen.</p><p>Ein Klick öffnet die 13 Orbitalpositionen. Spielernamen erscheinen nur im Systemfenster, nicht auf der Sternkarte.</p><div class="sensor-stat"><span>Aufklärsonden</span><strong>${state.ships.spyProbe}</strong></div></aside>`;
   const target = system.slots.find((slot) => slot.targetId === selectedOrbitTargetId);
   const slotList = `<div class="orbit-list" aria-label="Orbitalpositionen 1 bis 13">${system.slots.map((slot) => slot.empty
-    ? `<div class="orbit-slot empty"><strong>${slot.position}</strong><span>Leerer Orbit</span><small>—</small></div>`
-    : `<button class="orbit-slot ${slot.free ? "free" : "occupied"} ${slot.targetId === selectedOrbitTargetId ? "selected" : ""}" data-orbit-target="${escapeHtml(slot.targetId)}"><strong>${slot.position}</strong><span>${escapeHtml(slot.name)}</span><small>${slot.free ? "Frei · unbekannte Größe" : `Spieler · ${escapeHtml(slot.owner || "Unbekannt")}`}</small></button>`).join("")}</div>`;
+    ? `<div class="orbit-slot empty"><strong>${slot.position}</strong><span>${slot.unexplored ? "Unbekannter Orbit" : "Leerer Orbit"}</span><small>—</small></div>`
+    : `<button class="orbit-slot ${slot.own ? "own" : slot.free ? "free" : "occupied"} ${slot.targetId === selectedOrbitTargetId ? "selected" : ""}" data-orbit-target="${escapeHtml(slot.targetId)}"><strong>${slot.position}</strong><span>${escapeHtml(slot.name)}</span><small>${slot.own ? "Eigene Kolonie" : slot.free ? "Frei · unbekannte Größe" : `Spieler · ${escapeHtml(slot.owner || "Unbekannt")}`}</small></button>`).join("")}</div>`;
   const summary = `<span class="eyebrow">${galaxyCoordinates(system.position)} · ${system.distance} SEKTOREN</span><h2>${escapeHtml(system.signature)}</h2><p>${system.planetCount} sichtbare Welten · ${system.occupiedCount} bewohnt · ${system.freeCount} frei</p>${slotList}`;
   if (!target) return `<aside class="galaxy-inspector">${summary}<div class="intel-locked">Wähle eine belegte Position für Spionage oder Angriff – oder eine freie Welt zur Kolonisierung.</div></aside>`;
+  if (target.own) return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">EIGENE KOLONIE · POSITION ${target.position}</span><h3>${escapeHtml(target.name)}</h3><p>Diese Welt erweitert dein gemeinsames Sensornetz. Alle Kolonien bleiben gleichzeitig sichtbar.</p><button class="primary-button" data-planet-id="${escapeHtml(target.planetId)}">Als aktive Welt auswählen</button></section></aside>`;
   if (target.free) { const atLimit = state.planets.length >= 8; return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · FREIE WELT</span><h3>${escapeHtml(target.name)}</h3><p>Größe und Beschaffenheit werden erst bei der Besiedlung bekannt. Ein Kolonieschiff wird verbraucht.</p><button class="primary-button" data-colonize="${escapeHtml(target.targetId)}" ${!state.ships.colonyShip || actionBusy || atLimit ? "disabled" : ""}>${atLimit ? "Planetenlimit 8 erreicht" : state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button></section></aside>`; }
   const report = currentReport(target.targetId);
   const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
   return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · BESIEDELT</span><h3>${escapeHtml(target.name)}</h3><p>Kolonie von <strong>${escapeHtml(target.owner || "Unbekannt")}</strong>. Für Wirtschaft, Flotte und Verteidigung ist weiterhin ein Sondenscan nötig.</p>
   <div class="intel-actions"><button class="primary-button" data-spy-target="${escapeHtml(target.targetId)}" data-probes="1" ${!state.ships.spyProbe || cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Mit 1 Sonde ausspähen"}</button><button class="secondary-button" data-spy-target="${escapeHtml(target.targetId)}" data-probes="5" ${state.ships.spyProbe < 5 || cooldown || actionBusy ? "disabled" : ""}>Tiefenscan · 5 Sonden</button><button class="secondary-button raid-action" data-raid-target="${escapeHtml(target.targetId)}" ${!report || actionBusy || !Object.keys(FLEET).some(key=>state.ships[key]>0) ? "disabled" : ""}>Ausgewählte Flotte angreifen lassen</button></div>${fleetSelector()}
-  ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/5</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString("de-DE")} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder · ${report.world.usedFields || 0} bebaut</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}${reportSection("Planetare Abwehr", report.defenses, DEFENSE)}${report.activeMissions !== null && report.activeMissions !== undefined ? `<section class="intel-section"><h3>Flottenlage</h3><div class="intel-values"><div><span>Aktive Verbände</span><strong>${formatNumber(report.activeMissions)}</strong></div></div></section>` : ""}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
+  ${report ? `<div class="report-heading"><span>AUFKLÄRUNGSBERICHT</span><strong>${report.intelligence}/5</strong></div><p>Momentaufnahme vom ${new Date(report.createdAt).toLocaleTimeString(locale())} · gültig für ${formatDuration(report.expiresAt - Date.now())}</p><p>Besitzer: ${escapeHtml(report.owner || "noch unbekannt")}<br>Sondenverluste: ${report.lost} / ${report.probes} · Abfangrisiko: ${report.risk}%</p>${report.world ? `<p>${escapeHtml(report.world.classification)} · ${report.world.fields} Baufelder · ${report.world.usedFields || 0} bebaut</p>` : ""}${reportSection("Rohstoffe", report.resources, RESOURCE_LABELS)}${reportSection("Flotte", report.ships, SHIPS)}${reportSection("Infrastruktur", report.buildings, BUILDINGS)}${reportSection("Forschung", report.research, RESEARCH)}${reportSection("Planetare Abwehr", report.defenses, DEFENSE)}${report.activeMissions !== null && report.activeMissions !== undefined ? `<section class="intel-section"><h3>Flottenlage</h3><div class="intel-values"><div><span>Aktive Verbände</span><strong>${formatNumber(report.activeMissions)}</strong></div></div></section>` : ""}` : `<div class="intel-locked">Keine aktuellen Daten. Ein Spionagebericht schaltet den Raubzug frei.</div>`}
   </section></aside>`;
+}
+function systemPlanetPreview(system) {
+  if (!system) return "";
+  return `<section class="solar-preview" aria-label="Sonnensystem ${escapeHtml(system.signature)}"><div class="solar-preview-heading"><div><span class="eyebrow">SONNENSYSTEM</span><h2>${escapeHtml(system.signature)}</h2></div><span>${system.planetCount} erfasste Welten · ${system.distance} Sektoren</span></div><div class="solar-orbits"><div class="solar-sun" aria-hidden="true"></div>${system.slots.map(slot => slot.empty ? `<div class="solar-orbit vacant"><i></i><span>${slot.position}</span><small>${slot.unexplored ? "Unbekannt" : "Leer"}</small></div>` : `<button class="solar-orbit ${slot.own ? "own" : slot.free ? "free" : "occupied"} ${selectedOrbitTargetId === slot.targetId ? "selected" : ""}" data-orbit-target="${escapeHtml(slot.targetId)}" aria-label="Position ${slot.position}: ${escapeHtml(slot.name)}"><i class="orbit-planet planet-tone-${slot.position % 4}"></i><span>${slot.position}</span><strong>${escapeHtml(slot.name)}</strong><small>${slot.own ? "Eigene Kolonie" : slot.free ? "Besiedelbar" : escapeHtml(slot.owner || "Unbekannt")}</small></button>`).join("")}</div><p>Wähle eine Welt für Details und Flottenbefehle. Größe und Beschaffenheit fremder Welten bleiben ohne Aufklärung verborgen.</p></section>`;
 }
 function galaxyView() {
   const size = galaxySpan / galaxyZoom;
@@ -1169,17 +1213,30 @@ function galaxyView() {
     stars += `<path d="M 0 ${py} H 100"/><text x=".6" y="${py+2}">${Math.round(y)}</text>`;
   }
   stars = `<g class="coordinate-grid">${stars}</g>`;
-  const space = `<svg class="survey-field" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="survey-window"><circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}"/></clipPath></defs><g clip-path="url(#survey-window)"><rect width="100" height="100" fill="#020309"/></g>${stars}<circle cx="${origin.x}" cy="${origin.y}" r="${galaxyRadius / size * 100}" fill="none" stroke="#73ae82" stroke-width=".12"/><path d="M ${origin.x} 0 V 100 M 0 ${origin.y} H 100" stroke="#59ba73" stroke-width=".12"/>${target ? `<path d="M ${target.x} 0 V 100 M 0 ${target.y} H 100" stroke="#e16e87" stroke-width=".15"/>` : ""}</svg>`;
+  const origins = galaxySensorOrigins.length ? galaxySensorOrigins : [{ planetId: activePlanet().id, name: activePlanet().name, position: galaxyOrigin, radius: galaxyRadius, active: true }];
+  const circles = origins.map(o => { const p = point(o.position); return { ...o, x: p.x, y: p.y, r: o.radius / size * 100 }; });
+  const circlePaths = circles.map(o => `<circle cx="${o.x}" cy="${o.y}" r="${o.r}"/>`).join("");
+  let dust = "";
+  // Deterministic world-space stars: they do not jump when the map is dragged or refreshed.
+  for (let i = 0; i < 750; i++) {
+    const p = point({ x: (i * 73.317 % galaxySpan), y: (i * i * 19.137 % galaxySpan) });
+    if (p.x < 0 || p.x > 100 || p.y < 0 || p.y > 100) continue;
+    dust += `<circle cx="${p.x}" cy="${p.y}" r="${i % 7 === 0 ? .12 : .065}" fill="#dce4ef" opacity="${.2 + i % 5 * .1}"/>`;
+  }
+  const space = `<svg class="survey-field" viewBox="0 0 100 100" aria-hidden="true"><defs><clipPath id="survey-window">${circlePaths}</clipPath></defs><g clip-path="url(#survey-window)"><rect width="100" height="100" fill="#020309"/>${dust}</g>${stars}${circles.map(o => `<circle class="sensor-disc ${o.active ? "active" : ""}" data-sensor-planet="${escapeHtml(o.planetId)}" cx="${o.x}" cy="${o.y}" r="${o.r}" fill="none" stroke="${o.active ? "#87b798" : "#ab9570"}" stroke-opacity=".65" stroke-width=".14"/>`).join("")}${target ? `<circle cx="${target.x}" cy="${target.y}" r="2.1" fill="none" stroke="#efcd86" stroke-width=".16"/>` : ""}</svg>`;
+  const colonyMarkers = circles.filter(o => o.x >= 0 && o.x <= 100 && o.y >= 0 && o.y <= 100).map(o => `<button class="colony-marker ${o.active ? "active" : ""}" style="left:${o.x}%;top:${o.y}%" data-sensor-focus="${escapeHtml(o.planetId)}" aria-label="${escapeHtml(o.name)} zentrieren"><i></i><span>${escapeHtml(o.name)}</span></button>`).join("");
   const markers = galaxyIntel.map((system) => {
     const p = point(system.position);
     if (p.x < 2 || p.x > 97 || p.y < 3 || p.y > 95) return "";
     return `<button class="signal-point system-signal ${system.id === selectedSignalId ? "selected" : ""}" style="left:${p.x}%;top:${p.y}%;--star-size:${system.starSize}px;--star-light:${system.luminosity}" data-signal-id="${escapeHtml(system.id)}" aria-label="${escapeHtml(system.signature)} mit ${system.planetCount} sichtbaren Welten bei ${galaxyCoordinates(system.position)}"><i></i><span>${escapeHtml(system.signature)} · ${system.planetCount} Welten</span></button>`;
   }).join("");
-  return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Systemübersicht</h1><p>Je heller ein Stern leuchtet, desto mehr freie oder bewohnte Welten enthält sein System.</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
-  <div class="map-legend"><span><i class="legend-home"></i> Heimat</span><span><i class="legend-star"></i> Sternsystem · anklicken</span><span><i class="legend-range"></i> Sensorreichweite ${galaxyRadius.toFixed(1)}</span><span>Außerhalb: unerforscht · Tiefraumsensorik erweitert den Sichtkreis</span></div>
-  <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="home">Heimat zentrieren</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
+  return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Sternenkarte</h1><p>Dein Imperium im Überblick. Jede eigene Welt erschließt einen eigenen Sichtkreis.</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
+  <div class="map-legend"><span><i class="legend-home"></i> Eigene Welten</span><span><i class="legend-star"></i> Sternsystem · anklicken</span><span><i class="legend-range"></i> Sensorreichweite ${galaxyRadius.toFixed(1)}</span><span>Schwarz: erforscht · Grau: unbekannt · Sichtkreise überlappen sich</span></div>
+  <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="empire">Ganzes Imperium</button><button class="secondary-button" data-map-action="home">Aktive Welt</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
+  <div class="colony-nav" aria-label="Eigene Sichtkreise">${origins.map(o => `<button class="secondary-button ${o.active ? "active" : ""}" data-sensor-focus="${escapeHtml(o.planetId)}"><i></i>${escapeHtml(o.name)}<small>${galaxyCoordinates(o.position)}</small></button>`).join("")}</div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
-  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}<div class="home-signal" style="left:${origin.x}%;top:${origin.y}%"><i></i><span>${escapeHtml(activePlanet().name)}</span></div><div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SYSTEME · KARTENRAUM ${galaxySpan} × ${galaxySpan}<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Stern anklicken, dann eine Position 1–13 wählen.</small></div></section>${galaxyInspector()}</div>
+  <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}${colonyMarkers}<div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SYSTEME · KARTENRAUM ${galaxySpan} × ${galaxySpan}<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Stern anklicken, dann eine Position 1–13 wählen.</small></div></section>${galaxyInspector()}</div>
+  ${systemPlanetPreview(selected)}
   <section class="contact-console"><div class="panel-title"><h2>Erfasste Sternsysteme</h2><span>${galaxyIntel.length} SYSTEME</span></div><table><thead><tr><th>System</th><th>X : Y</th><th>Entfernung</th><th>Welten</th></tr></thead><tbody>${galaxyIntel.map(system => `<tr class="${system.id === selectedSignalId ? "selected" : ""}"><td><button data-signal-id="${escapeHtml(system.id)}">${escapeHtml(system.signature)}</button></td><td>${galaxyCoordinates(system.position)}</td><td>${system.distance} Sektoren</td><td>${system.planetCount} sichtbar · ${system.occupiedCount} bewohnt</td></tr>`).join("") || `<tr><td colspan="4">Keine Systeme im Sichtkreis. Tiefraumsensorik erweitert die Reichweite.</td></tr>`}</tbody></table></section>
   <section class="panel galaxy-flight-panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenbewegungen</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section>
   <section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Expeditionen & Kolonisierung</h2><span>NEUTRALE ZIELE</span></div>${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
@@ -1218,11 +1275,11 @@ function mailboxEntries() {
   ].map(entry => ({...entry, key:entry.kind + ":" + entry.id, unread:entry.kind !== "sent" && !entry.item.read && !state.readReports.includes(entry.kind + ":" + entry.id)})).sort((a,b)=>b.at-a.at);
 }
 function filteredMailboxEntries() {
-  const query = mailboxSearch.toLocaleLowerCase("de-DE");
+  const query = mailboxSearch.toLocaleLowerCase(locale());
   return mailboxEntries().filter(entry => {
     const archived = state.archivedReports.includes(entry.key);
     const folder = mailboxFilter === "archive" ? archived : !archived && (mailboxFilter === "all" || (mailboxFilter === "unread" ? entry.unread : entry.kind === mailboxFilter));
-    return folder && (!query || [entry.title,entry.from,entry.preview].join(" ").toLocaleLowerCase("de-DE").includes(query));
+    return folder && (!query || [entry.title,entry.from,entry.preview].join(" ").toLocaleLowerCase(locale()).includes(query));
   });
 }
 function applyMailboxAction(action) {
@@ -1309,7 +1366,7 @@ async function renamePlanet(planetId) {
   } finally { actionBusy = false; render(); }
 }
 function logView() {
-  return `<section class="view-heading"><div><span class="eyebrow">EREIGNISSPEICHER</span><h1>Flugdaten und Industrieprotokoll.</h1><p>Die jüngsten achtzig Ereignisse bleiben im serverseitigen Spielstand erhalten.</p></div><span class="sector-label">${state.log.length} EINTRÄGE</span></section><section class="log-list">${state.log.map((entry) => `<article class="log-row ${escapeHtml(entry.type)}"><time>${new Date(entry.at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>${escapeHtml(entry.text)}</span></article>`).join("")}</section>`;
+  return `<section class="view-heading"><div><span class="eyebrow">EREIGNISSPEICHER</span><h1>Flugdaten und Industrieprotokoll.</h1><p>Die jüngsten achtzig Ereignisse bleiben im serverseitigen Spielstand erhalten.</p></div><span class="sector-label">${state.log.length} EINTRÄGE</span></section><section class="log-list">${state.log.map((entry) => `<article class="log-row ${escapeHtml(entry.type)}"><time>${new Date(entry.at).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time><span>${escapeHtml(entry.text)}</span></article>`).join("")}</section>`;
 }
 async function searchPlayers(query) {
   try {
@@ -1345,6 +1402,7 @@ async function sendPlayerMessage(form) {
 }
 function render() {
   if (!state) return;
+  setProtectedTexts([state.commander,...state.planets.map(p=>p.name),...galaxyIntel.flatMap(system=>system.slots.flatMap(slot=>[slot.name,slot.owner])),...playerSearchResults.map(player=>player.username)]);
   lastFullRender = Date.now();
   resourceTicker();
   $("#commander-name").textContent = state.commander;
@@ -1361,6 +1419,11 @@ function render() {
   const unreadCount = mailboxEntries().filter(entry => entry.unread).length;
   const messageNav = document.querySelector('#nav [data-view="messages"]');
   if (messageNav) messageNav.innerHTML = `<span>✉</span> Nachrichten${unreadCount ? ` (${unreadCount})` : ""}`;
+  if (IS_DEMO) {
+    content.insertAdjacentHTML("afterbegin",'<div class="demo-banner"><strong>DEMO · Beispielimperium</strong><span>Nur ansehen · Kein echter Spielstand · Keine Speicherung</span><a href="/">Eigenes Imperium starten →</a></div>');
+    content.querySelectorAll("[data-build],[data-build-batch],[data-research],[data-ship],[data-mission],[data-colonize],[data-spy-target],[data-raid-target],[data-start-transfer]").forEach(button=>button.disabled=true);
+  }
+  translateDOM();
 }
 
 function startBuilding(key, amount = 1) {
@@ -1485,7 +1548,7 @@ function pay(cost) { for (const resource of Object.keys(RESOURCE_LABELS)) state.
 function toast(message, error = false) {
   const element = document.createElement("div");
   element.className = `toast${error ? " error" : ""}`;
-  element.textContent = message;
+  element.textContent = translateText(message);
   $("#toast-region").append(element);
   setTimeout(() => element.remove(), 3600);
 }
@@ -1529,6 +1592,7 @@ content.addEventListener("input", event => {
   if (event.target.id === "transfer-destination") transferDraft.destination = event.target.value;
 });
 content.addEventListener("submit", event => {
+  if (IS_DEMO) { event.preventDefault(); toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return; }
   if (event.target.id === "mailbox-search-form") { event.preventDefault(); mailboxSearch = mailboxSearchDraft.trim(); mailboxSelection.clear(); render(); }
   if (event.target.id === "message-compose") { event.preventDefault(); sendPlayerMessage(event.target); }
   if (event.target.id === "player-search-form") { event.preventDefault(); const query = String(new FormData(event.target).get("query") || "").trim(); if (query.length < 3) { toast("Bitte mindestens drei Zeichen eingeben.", true); return; } searchPlayers(query); }
@@ -1570,6 +1634,9 @@ content.addEventListener("wheel", event => {
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
+  if (IS_DEMO && !["signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter"].some(key=>button.dataset[key]!==undefined)) {
+    toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return;
+  }
   if (button.dataset.playerSearch !== undefined) {
     const query = String(new FormData(button.closest("form")).get("query") || "").trim();
     if (query.length < 3) { toast("Bitte mindestens drei Zeichen eingeben.", true); return; }
@@ -1610,9 +1677,25 @@ content.addEventListener("click", (event) => {
     cancelBuilding(Number(button.dataset.cancelBuilding));
     return;
   }
+  if (button.dataset.fleetFilter) { fleetStatusFilter = button.dataset.fleetFilter; render(); return; }
+  if (button.dataset.sensorFocus) {
+    if (Date.now() < suppressMapClickUntil) return;
+    const origin = galaxySensorOrigins.find(o => o.planetId === button.dataset.sensorFocus);
+    if (origin) {
+      galaxyOffset = { x: origin.position.x - galaxyOrigin.x, y: origin.position.y - galaxyOrigin.y };
+      galaxyZoom = Math.max(.5, Math.min(5, galaxySpan / Math.max(44, origin.radius * 2.6)));
+    }
+    render(); return;
+  }
   if (button.dataset.signalId) {
     if (Date.now() < suppressMapClickUntil) return;
     selectedSignalId = button.dataset.signalId;
+    const system = galaxyIntel.find(entry => entry.id === selectedSignalId);
+    if (system) {
+      const half = galaxySpan / galaxyZoom * .4;
+      if (Math.abs(system.position.x - galaxyOrigin.x - galaxyOffset.x) > half || Math.abs(system.position.y - galaxyOrigin.y - galaxyOffset.y) > half)
+        galaxyOffset = { x: system.position.x - galaxyOrigin.x, y: system.position.y - galaxyOrigin.y };
+    }
     selectedOrbitTargetId = null;
     raidSelection = {};
     render(); return;
@@ -1634,6 +1717,7 @@ content.addEventListener("click", (event) => {
     if (action === "down") galaxyOffset.y += step;
     if (action === "in") galaxyZoom = Math.min(5, galaxyZoom + .5);
     if (action === "out") galaxyZoom = Math.max(.5, galaxyZoom - .5);
+    if (action === "empire") fitGalaxyEmpire();
     if (action === "home") galaxyOffset = { x: 0, y: 0 };
     if (action === "refresh") fetchGalaxy({ force: true });
     render();
@@ -1648,7 +1732,7 @@ content.addEventListener("click", (event) => {
     addLog("system", `Aktive Welt auf ${planet.name} gewechselt.`);
     toast(`${planet.name} ist jetzt die aktive Welt.`);
     render();
-    save({ quiet: true });
+    save({ quiet: true }).then(() => fetchGalaxy({ force: true }));
     return;
   }
   if (button.dataset.raidTarget) {
@@ -1678,8 +1762,15 @@ $("#planet-switch").addEventListener("change", async (event) => {
   render();
 });
 $("#logout-button").addEventListener("click", () => { if (!actionBusy && !isSaving) logout(); });
+$("#theme-switch").addEventListener("change", event => {
+  const theme = applyTheme(event.target.value);
+  try { localStorage.setItem(themePreferenceKey(), theme); } catch {}
+  toast(`Layout: ${{sand:"Sand",nebula:"Blau-Lila",void:"Schwarz"}[theme]}`);
+});
 
 setGateMode("register");
+document.addEventListener("orbital-language-change", () => { if (state) render(); });
+initLanguage();
 restoreSession();
 setInterval(() => {
   if (!state || actionBusy || isSaving) return;

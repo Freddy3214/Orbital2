@@ -1,0 +1,25 @@
+.theme-switch { display:flex; flex-direction:column; gap:4px; color:#f3e9d8; font-size:10px; }
+.theme-switch select { color:#f5eddc; background:#403929; border:1px solid #b69c71; border-radius:6px; padding:7px 8px; min-height:32px; font:inherit; font-size:11px; }
+:root[data-theme="nebula"] { --bg:#111326; --text:#ecedff; --muted:#b0b6d2; --cyan:#bac5ff; --line:#515c92; --theme-top:#515d9d; --theme-bottom:#252b51; --theme-panel:#1c223d; --theme-border:#58669d; --theme-light:#d6deff; --theme-button:#3c487a; --theme-table:#303960; --theme-focus:#6d70ac; --survey-fog:#252936; }
+:root[data-theme="void"] { --bg:#08090b; --text:#eeeeef; --muted:#a4abb5; --cyan:#e0d3b6; --line:#454851; --theme-top:#303239; --theme-bottom:#141519; --theme-panel:#111317; --theme-border:#484b53; --theme-light:#f0ede5; --theme-button:#24272e; --theme-table:#1b1e24; --theme-focus:#42403a; --survey-fog:#292c32; }
+:root:not([data-theme="sand"]) body { background:var(--bg); color:var(--text); }
+:root:not([data-theme="sand"]) .starfield { background:radial-gradient(ellipse at top,var(--theme-bottom),var(--bg) 80%); }
+:root:not([data-theme="sand"]) #app .topbar,:root:not([data-theme="sand"]) #app .view-heading { background:linear-gradient(var(--theme-top),var(--theme-bottom)); border-color:var(--theme-border); }
+:root:not([data-theme="sand"]) #app :is(.panel,.hero-panel,.planet-card,nav,.sidebar-footer,.galaxy-inspector,.contact-console,.fleet-operation,.entity-card,.mission-card) { background:var(--theme-panel); border-color:var(--theme-border); color:var(--text); }
+:root:not([data-theme="sand"]) #app :is(nav h2,.panel-title) { background:linear-gradient(var(--theme-top),var(--theme-bottom)); border-color:var(--theme-border); color:var(--theme-light); }
+:root:not([data-theme="sand"]) #app :is(nav button,.secondary-button) { background:linear-gradient(var(--theme-button),var(--theme-bottom)); border-color:var(--theme-border); color:var(--theme-light); }
+:root:not([data-theme="sand"]) #app :is(nav button.active,nav button:hover,.secondary-button:hover,.fleet-filter button.active) { background:var(--theme-focus); color:white; box-shadow:inset 3px 0 var(--theme-light); }
+:root:not([data-theme="sand"]) #app .primary-button { background:linear-gradient(var(--theme-light),#a9acc1); color:#141822; border-color:var(--theme-light); }
+:root:not([data-theme="sand"]) #app :is(.resource,.planet-switch select,.theme-switch select) { background:linear-gradient(var(--theme-button),var(--theme-panel)); border-color:var(--theme-border); color:var(--theme-light); }
+:root:not([data-theme="sand"]) #app :is(.nav-info,.view-heading p,.galaxy-inspector p,.meta,.view-note,.entity-info p,.mission-card p,.queue-top,.transfer-console p) { color:var(--muted); }
+:root:not([data-theme="sand"]) #app :is(.contact-console th,table th) { background:var(--theme-table); color:var(--theme-light); }
+:root:not([data-theme="sand"]) #app :is(table td,table th,.contact-console) { border-color:var(--theme-border); }
+:root:not([data-theme="sand"]) #app :is(.contact-console tr.selected,.orbit-slot.selected) { background:var(--theme-focus); }
+:root:not([data-theme="sand"]) #app :is(.brand span,.resource-top,.commander,.planet-switch,.theme-switch,.galaxy-toolbar span,.scanner-symbol,.sensor-stat,.report-heading,.galaxy-inspector a,.panel a,.entity-info h2,.orbit-action h3) { color:var(--theme-light); }
+:root:not([data-theme="sand"]) #app :is(input,textarea,select) { background:var(--theme-bottom); color:var(--text); border-color:var(--theme-border); }
+:root:not([data-theme="sand"]) #app :is(.universe-map,.solar-preview) { border-color:var(--theme-border); }
+@media(max-width:700px) { .theme-switch { flex-direction:row; align-items:center; margin-left:auto; }.theme-switch select { min-height:34px; } }
+.gate-language { display:flex!important; justify-content:space-between; align-items:center; gap:12px; margin-bottom:18px!important; font-size:10px!important; }
+.gate-language select { background:#0a101a; color:#d4ddeb; border:1px solid #475166; border-radius:6px; min-height:32px; padding:5px 8px; }
+.gate-demo-link { display:block; margin-top:18px; padding-top:14px; border-top:1px solid #c7b18130; color:#ddc594; font-size:12px; text-decoration:none; text-align:center; }.gate-demo-link:hover { color:#fff3d4; }
+.demo-banner { display:flex; flex-wrap:wrap; align-items:center; gap:10px; border:1px solid #d6b878; background:#181710; color:#e7d2a9; padding:12px 14px; border-radius:8px; margin-bottom:12px; font-size:11px; }.demo-banner span { opacity:.8; }.demo-banner a { margin-left:auto; color:#ffde9e; }

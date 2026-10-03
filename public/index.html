@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="de">
+<html lang="de" data-theme="sand">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,7 +8,8 @@
     <link rel="stylesheet" href="/styles.css?v=10" />
     <link rel="stylesheet" href="/galaxy.css" />
     <link rel="stylesheet" href="/classic.css?v=8" />
-    <link rel="stylesheet" href="/sand.css?v=20261003-boost60" />
+    <link rel="stylesheet" href="/sand.css?v=20261003-sensornet" />
+    <link rel="stylesheet" href="/themes.css?v=20261003" />
   </head>
   <body>
     <div class="starfield" aria-hidden="true"></div>
@@ -20,6 +21,8 @@
         </div>
         <div id="resource-ticker" class="resource-ticker"></div>
         <label class="planet-switch">Aktiver Planet<select id="planet-switch" aria-label="Aktiven Planeten wechseln"></select></label>
+        <label class="theme-switch">Layout<select id="theme-switch" aria-label="Farblayout auswählen"><option value="sand">Sand</option><option value="nebula">Blau-Lila</option><option value="void">Schwarz</option></select></label>
+        <label class="theme-switch language-switch">Sprache<select data-language-switch aria-label="Sprache auswählen"><option value="de">Deutsch</option><option value="en">English</option></select></label>
         <div class="commander"><span class="status-dot"></span><span id="commander-name"></span><button class="icon-button" id="save-button" title="Jetzt speichern">↻</button><button class="icon-button" id="logout-button" title="Abmelden">⇥</button></div>
       </header>
 
@@ -58,8 +61,10 @@
 
     <div id="toast-region" class="toast-region" aria-live="polite"></div>
     <div id="commander-gate" class="commander-gate">
-      <div class="gate-orbit orbit-one"></div><div class="gate-orbit orbit-two"></div>
+      <div class="gate-battle" aria-hidden="true"></div>
+      <div class="gate-intro"><span class="eyebrow">ORBITAL FOUNDRY</span><h2>Dein Imperium.<br>Deine Galaxie.</h2><p>Besiedle ferne Welten. Errichte deine Flotte.<br>Entscheide, was zwischen den Sternen entsteht.</p><div class="gate-features"><span>PLANETEN BESIEDELN</span><span>FLOTTEN KOMMANDIEREN</span><span>TECHNOLOGIEN ERFORSCHEN</span></div></div>
       <section class="gate-card">
+        <label class="gate-language">Sprache / Language<select data-language-switch aria-label="Language / Sprache"><option value="de">Deutsch</option><option value="en">English</option></select></label>
         <div class="gate-logo">OF</div>
         <div class="auth-switch" role="tablist" aria-label="Zugang auswählen"><button class="active" data-auth-mode="register" role="tab">Registrieren</button><button data-auth-mode="login" role="tab">Anmelden</button></div>
         <p class="eyebrow" id="gate-eyebrow">NEUER KOMMANDOKANAL</p>
@@ -71,8 +76,9 @@
         <input id="password-input" minlength="8" maxlength="128" type="password" placeholder="mindestens 8 Zeichen" autocomplete="new-password" />
         <button id="start-button" class="primary-button">Account erstellen <span>→</span></button>
         <small id="auth-note">Passwörter werden nicht im Browser gespeichert. Der Server speichert nur einen sicheren Prüfwert.</small>
+        <a class="gate-demo-link" href="/demo">Spiel ansehen · ohne Account →</a>
       </section>
     </div>
-    <script type="module" src="/app.js?v=20261003-planning"></script>
+    <script type="module" src="/app.js?v=20261003-sensornet"></script>
   </body>
 </html>
