@@ -48,6 +48,7 @@ body { background:#27251f; }.starfield { background:radial-gradient(ellipse at t
 .command-overview {grid-template-columns:minmax(0,1.15fr) minmax(280px,1fr);align-items:start}
 .command-overview .compact-planet {grid-column:1/-1;min-height:0;padding:18px 22px}
 .compact-planet .hero-planet-art {width:160px;height:160px;margin:0 22px 0 0;float:left;aspect-ratio:1}
+.compact-planet .hero-planet-art { border: 3px solid #cdb68d99; box-shadow: 0 0 0 6px #141b21, 0 0 0 7px #cdb68d55, 0 18px 30px #0008; }
 .compact-planet h2 {max-width:none;margin:6px 0;font-size:23px}.compact-planet p {max-width:none;font-size:12px}
 .compact-planet .field-meter {clear:none;margin:12px 0 0 182px}.compact-planet .metric-row {clear:none;margin:10px 0 0 182px}.compact-planet .metric {padding:6px 9px}.compact-planet .metric strong {font-size:16px}
 .command-overview .fleet-dashboard-panel {grid-column:1/-1;grid-row:2}
