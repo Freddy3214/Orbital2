@@ -1,4 +1,5 @@
 import { FLEET, DEFENSE } from "./units.js";
+import { simulateBattle } from "./combat.js";
 import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js";
 const IS_DEMO = location.pathname === "/demo";
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -242,6 +243,7 @@ let galaxyRadius = 14;
 let galaxySpan = 220;
 let galaxyZoom = 1;
 let raidSelection = {};
+let simulationDraft = null;
 let transferSelection = {};
 let selectedMailboxEntry = null;
 let mailboxFilter = "all";
@@ -319,11 +321,6 @@ function costMarkup(cost) {
 function addLog(type, text) {
   state.log.unshift({ at: Date.now(), type, text });
   state.log = state.log.slice(0, 80);
-  if (/abgeschlossen|erforscht|übernommen|Konvoi|Transportverband/.test(text)) {
-    state.notifications ??= [];
-    state.notifications.unshift({id:"event-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),at:Date.now(),kind:type,title:type==="mission"?"Transport- und Flottenbericht":"Auftrag abgeschlossen",text,read:false});
-    state.notifications=state.notifications.slice(0,40);
-  }
 }
 function activePlanet() {
   return state.planets.find((planet) => planet.id === state.activePlanetId) || state.planets[0];
@@ -380,6 +377,8 @@ function ensureStateShape() {
   state.ships.spyProbe ??= 0;
   state.spyReports ??= [];
   state.combatReports ??= [];
+  state.pvpFlights = Array.isArray(state.pvpFlights) ? state.pvpFlights : [];
+  state.incomingFlights = Array.isArray(state.incomingFlights) ? state.incomingFlights : [];
   state.messages ??= [];
   state.notifications ??= [];
   state.readReports ??= [];
@@ -771,8 +770,7 @@ async function raidTarget(targetId) {
     if (!response.ok) throw new Error(payload.error || "Raubzug konnte nicht ausgeführt werden.");
     state = payload.state;
     ensureStateShape();
-    const loot = Object.entries(payload.report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${formatNumber(value)} ${RESOURCE_LABELS[key]}`).join(" · ");
-    toast(payload.report.won ? `Raubzug erfolgreich${loot ? `: ${loot}` : "."}` : "Raubzug abgewehrt. Einsatzflotte hat Verluste erlitten.", !payload.report.won);
+    toast(`Angriffsflotte gestartet · Ankunft in ${formatDuration(payload.flight.arrivesAt - Date.now())}.`);
     render();
     fetchGalaxy({ force: true });
     fetchLeaderboard();
@@ -791,7 +789,7 @@ async function spyTarget(targetId, probes) {
     if (!response.ok) throw new Error(payload.error || "Aufklärung fehlgeschlagen.");
     state = payload.state;
     ensureStateShape();
-    toast(`Bericht eingetroffen · Detailstufe ${payload.report.intelligence}/4`);
+    toast(`Sonden gestartet · Bericht nach Ankunft in ${formatDuration(payload.flight.arrivesAt - Date.now())}.`);
   } catch (error) { toast(error.message, true);
   } finally {
     actionBusy = false;
@@ -920,11 +918,9 @@ function queueRows(buildingsOnly = false) {
 }
 
 function notificationMarkup() {
-  const notices = (state.notifications || []).slice(0, 6);
-  const unreadNotices = (state.notifications || []).filter(notice => !notice.read).length;
-  if (!notices.length) return `<div class="empty-state"><strong>Keine neuen Warnungen</strong>Sensorik und Ereignisprotokoll überwachen deinen Sektor.</div>`;
-  const icons = { scan: "◉", combat: "⚠", mission: "↗", system: "◎" };
-  return `<p>${unreadNotices ? `${unreadNotices} neue Meldungen · im Postfach lesen` : "Alle Meldungen gelesen"}</p><div class="log-list notification-list">${notices.map((notice) => `<article class="log-row ${escapeHtml(notice.kind || "system")} ${notice.priority === "high" && !notice.read ? "notification-high" : ""}"><time>${new Date(notice.at).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" })}</time><span><b>${icons[notice.kind] || "◎"} ${escapeHtml(notice.title || "Meldung")} · ${notice.read ? "Gelesen" : "Neu"}</b><small>${escapeHtml(notice.text || "")}</small></span></article>`).join("")}</div>`;
+  const incoming = (state.incomingFlights || []).sort((a,b)=>a.arrivesAt-b.arrivesAt);
+  if (!incoming.length) return `<div class="empty-state"><strong>Kein Anflug gemeldet</strong>Angreifende Flotten und Sonden erscheinen hier bis zur Ankunft.</div>`;
+  return `<p class="warning">${incoming.length} fremde ${incoming.length === 1 ? "Flotte" : "Flotten"} im Anflug · Rohstoffe können vor Ankunft transportiert werden.</p><div class="log-list notification-list">${incoming.map(flight=>`<article class="log-row combat notification-high"><time>${formatClock(flight.arrivesAt)}</time><span><b>⚠ ${flight.kind === "spy" ? "Spionagesonden" : "Angriff"} auf ${escapeHtml(flight.targetName)}</b><small>${escapeHtml(flight.attackerName)} · Ankunft in ${formatDuration(flight.arrivesAt-Date.now())}</small></span></article>`).join("")}</div>`;
 }
 
 function overviewView() {
@@ -937,8 +933,8 @@ function overviewView() {
     <div class="grid overview-grid command-overview">
       <section class="panel hero-panel compact-planet">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
-      <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
-      <section class="panel command-alerts"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.notifications?.length || 0} MELDUNGEN</span></div>${notificationMarkup()}</div></section>
+      <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length + state.pvpFlights.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
+      <section class="panel command-alerts"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.incomingFlights.length} ANFLÜGE</span></div>${notificationMarkup()}</div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Industrieprotokoll</h2><span>PRO STUNDE</span></div><div class="stat-list"><div class="stat-line"><span>Metallförderung</span><strong>+${formatNumber(rate.metal)}</strong></div><div class="stat-line"><span>Kristallförderung</span><strong>+${formatNumber(rate.crystal)}</strong></div><div class="stat-line"><span>Tritiumproduktion</span><strong>+${formatNumber(rate.tritium)}</strong></div><div class="stat-line"><span>Mineneffizienz</span><strong class="${energy.efficiency === 1 ? "energy-good" : "energy-warning"}">${formatNumber(energy.efficiency * 100)}%</strong></div></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Nächste Upgrades</h2><span>ROUTE</span></div>${upgradePathMarkup()}</div></section>
     </div>
@@ -1029,29 +1025,30 @@ function shipyardView() {
   return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Spezialschiffe, Frachter und Kampfschiffe sind nach Baugruppe geordnet. Jede planetare Werft arbeitet mit eigener Warteschlange.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section>${queueOverview()}<section class="entity-list">${ships.map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
 }
 function missionStatusMarkup() {
-  if (!state.missions.length) return `<div class="empty-state"><strong>Keine Flotten unterwegs</strong>Baue eine Frachtdrohne und beginne deine erste Bergung.</div>`;
+  const allMissions = [...state.missions, ...state.pvpFlights];
+  if (!allMissions.length) return `<div class="empty-state"><strong>Keine Flotten unterwegs</strong>Starte eine Expedition, einen Transport oder einen PvP-Einsatz.</div>`;
   const now = Date.now();
-  const returning = state.missions.filter(mission => mission.phase === "returning").length;
-  const missions = state.missions.filter(mission => fleetStatusFilter === "all" || (mission.phase === "returning" ? "returning" : "outgoing") === fleetStatusFilter)
+  const returning = allMissions.filter(mission => mission.phase === "returning").length;
+  const missions = allMissions.filter(mission => fleetStatusFilter === "all" || (mission.phase === "returning" ? "returning" : "outgoing") === fleetStatusFilter)
     .sort((a,b) => (a.phase === "returning" ? a.returnAt || a.arrivesAt + a.duration / (a.kind === "transport" ? 1 : 2) : a.arrivesAt) - (b.phase === "returning" ? b.returnAt || b.arrivesAt + b.duration / (b.kind === "transport" ? 1 : 2) : b.arrivesAt));
-  const filters = `<div class="fleet-filter" aria-label="Flottenbewegungen filtern">${[["all","Alle",state.missions.length],["outgoing","Hinflug",state.missions.length-returning],["returning","Rückflug",returning]].map(([key,label,count])=>`<button class="secondary-button ${fleetStatusFilter===key?"active":""}" data-fleet-filter="${key}" aria-pressed="${fleetStatusFilter===key}">${label} <b>${count}</b></button>`).join("")}<span>Nächstes Ereignis zuerst</span></div>`;
+  const filters = `<div class="fleet-filter" aria-label="Flottenbewegungen filtern">${[["all","Alle",allMissions.length],["outgoing","Hinflug",allMissions.length-returning],["returning","Rückflug",returning]].map(([key,label,count])=>`<button class="secondary-button ${fleetStatusFilter===key?"active":""}" data-fleet-filter="${key}" aria-pressed="${fleetStatusFilter===key}">${label} <b>${count}</b></button>`).join("")}<span>Nächstes Ereignis zuerst</span></div>`;
   return filters + `<div class="fleet-operations">${missions.map((mission) => {
     const destination = mission.kind === "transport" ? state.planets.find(planet => planet.id === mission.destinationPlanetId) : null;
-    const target = (destination ? {...destination,name:`Transport · ${state.planets.find(p=>p.id===mission.sourcePlanetId)?.name || "Startwelt"} → ${destination.name}`} : null) || MISSIONS[mission.targetId] || { name: mission.targetId, coordinates: "Unbekannt" };
+    const target = (destination ? {...destination,name:`Transport · ${state.planets.find(p=>p.id===mission.sourcePlanetId)?.name || "Startwelt"} → ${destination.name}`} : null) || MISSIONS[mission.targetId] || { name: `${mission.kind === "spy" ? "Spionage" : mission.kind === "raid" ? "Angriff" : "Einsatz"} · ${mission.targetName || mission.targetId}`, coordinates: mission.defenderName || "" };
     const returnAt = mission.returnAt || mission.arrivesAt + mission.duration / (mission.kind === "transport" ? 1 : 2);
     const outboundDone = mission.phase === "returning";
     const outboundProgress = outboundDone ? 100 : Math.min(100, Math.max(0, (now - mission.departedAt) / (mission.arrivesAt - mission.departedAt) * 100));
     const returnProgress = outboundDone ? Math.min(100, Math.max(0, (now - mission.arrivesAt) / (returnAt - mission.arrivesAt) * 100)) : 0;
     const fleet = Object.entries(mission.fleet || {}).filter(([,count]) => count > 0).map(([key,count]) => `${count}× ${SHIPS[key]?.name || key}`).join(" · ");
     const sourceName = state.planets.find(planet => planet.id === mission.sourcePlanetId)?.name || activePlanet().name;
-    const destinationName = destination?.name || MISSIONS[mission.targetId]?.name || mission.targetId;
+    const destinationName = destination?.name || MISSIONS[mission.targetId]?.name || mission.targetName || mission.targetId;
     const routeProgress = outboundDone ? 100 - returnProgress : outboundProgress;
-    const route = `<div class="flight-route ${outboundDone ? "returning" : ""}"><span>${escapeHtml(sourceName)}</span><div class="flight-route-track"><i style="left:${routeProgress}%">${outboundDone ? "◀" : "▶"}</i></div><span>${escapeHtml(destinationName)}</span></div><div class="flight-manifest"><span class="flight-phase">${outboundDone ? "RÜCKKEHR" : mission.kind === "transport" ? "TRANSPORT" : "EXPEDITION"}</span>${Object.entries(mission.cargo || mission.loot || {}).filter(([key,count])=>RESOURCE_LABELS[key] && count>0).map(([key,count])=>`<span>${RESOURCE_LABELS[key]}: ${formatNumber(count)}</span>`).join("")}</div>`;
+    const route = `<div class="flight-route ${outboundDone ? "returning" : ""}"><span>${escapeHtml(sourceName)}</span><div class="flight-route-track"><i style="left:${routeProgress}%">${outboundDone ? "◀" : "▶"}</i></div><span>${escapeHtml(destinationName)}</span></div><div class="flight-manifest"><span class="flight-phase">${outboundDone ? "RÜCKKEHR" : mission.kind === "transport" ? "TRANSPORT" : mission.kind === "spy" ? "SPIONAGE" : mission.kind === "raid" ? "ANGRIFF" : "EXPEDITION"}</span>${Object.entries(mission.cargo || mission.loot || {}).filter(([key,count])=>RESOURCE_LABELS[key] && count>0).map(([key,count])=>`<span>${RESOURCE_LABELS[key]}: ${formatNumber(count)}</span>`).join("")}</div>`;
     return `<section class="fleet-operation"><div class="fleet-operation-head"><div><strong>${escapeHtml(target.name)}</strong><span>${escapeHtml(target.coordinates || "")}</span></div><small>${escapeHtml(fleet || "Flottenverband")}</small></div>${route}<div class="queue-row ${outboundDone ? "completed-leg" : ""}"><div class="queue-top"><strong>Hinflug <span>· ${outboundDone ? "angekommen" : "unterwegs"}</span></strong><span>${outboundDone ? `Ankunft ${formatClock(mission.arrivesAt)}` : `${formatDuration(mission.arrivesAt - now)} · ${formatClock(mission.arrivesAt)}`}</span></div><div class="progress"><i style="width:${outboundProgress}%"></i></div></div><div class="queue-row return-leg ${outboundDone ? "active-return" : "waiting"}"><div class="queue-top"><strong>Rückflug <span>· ${outboundDone ? "unterwegs" : "geplant"}</span></strong><span>${outboundDone ? `${formatDuration(returnAt - now)} · ${formatClock(returnAt)}` : `Rückkehr ca. ${formatClock(returnAt)}`}</span></div><div class="progress"><i style="width:${returnProgress}%"></i></div></div></section>`;
   }).join("")}</div>`;
 }
 function currentReport(id) {
-  return state.spyReports.find((report) => report.targetId === id && report.expiresAt > Date.now());
+  return state.spyReports.find((report) => report.side !== "defender" && report.targetId === id && report.expiresAt > Date.now());
 }
 function galaxyCoordinates(position) { return `${position.x.toFixed(0)} : ${position.y.toFixed(0)}`; }
 function reportSection(title, values, catalog) {
@@ -1155,11 +1152,26 @@ function techtreeView() {
 function helpView() {
   return `<section class="view-heading"><h1>Hilfe & Bildnachweise</h1></section><section class="panel panel-inner"><h2>Sternenkarte</h2><p>Jeder weiße Stern ist ein auswählbares Ziel. Freie Welten lassen sich mit einem Kolonieschiff besiedeln. Besetzte Welten können ausgespäht und mit gültigem Spionagebericht angegriffen werden. Die Größe freier Welten (96–390 Felder) bleibt bis zur Besiedlung verborgen.</p><h2>Grafikstil</h2><p>Die Anlagen-, Forschungs-, Verteidigungs- und Flottengrafiken wurden als eigenständige Sci-Fi-Illustrationen für Orbital Foundry erstellt. Sie greifen die Atmosphäre klassischer Weltraum-Aufbauspiele auf, ohne Originalgrafiken anderer Spiele zu verwenden.</p><p>Die Bildatlanten werden direkt vom Spielserver geladen; externe Stockfoto-Anbieter werden dafür nicht mehr benötigt.</p></section>`;
 }
+function simulatorView() {
+  const draft = simulationDraft || {
+    attackerFleet: Object.fromEntries(Object.keys(FLEET).map(key => [key, state.ships[key] || 0])),
+    defenderFleet: {}, defenses: {}, attackerAvionics: state.research.avionics || 0,
+    defenderAvionics: 0, commandCenter: 1, shipyard: 0,
+  };
+  const inputRows = (catalog, values, side) => Object.entries(catalog).map(([key,item]) => `<label><span>${escapeHtml(SHIPS[key]?.name || item.name || key)}</span><input type="number" min="0" max="1000000" step="1" value="${Math.max(0,Number(values[key])||0)}" data-sim-side="${side}" data-sim-key="${key}"></label>`).join("");
+  const result = simulationDraft ? simulateBattle(draft) : null;
+  const lossText = values => Object.entries(values).filter(([,amount])=>amount).map(([key,amount])=>`${formatNumber(amount)} × ${SHIPS[key]?.name || key}`).join(" · ") || "keine";
+  return `<section class="view-heading"><div><span class="eyebrow">TAKTIKZENTRUM</span><h1>Kampfsimulator</h1><p>Trage hypothetische Flotten und planetare Abwehr ein. Der Simulator nutzt dieselbe Formel wie echte Angriffe; der tatsächliche Gegnerbestand kann sich bis zur Ankunft ändern.</p></div></section>
+  <div class="sim-grid"><section class="panel panel-inner"><h2>Angreifende Flotte</h2><div class="sim-inputs">${inputRows(FLEET,draft.attackerFleet,"attackerFleet")}</div><label>Avionik des Angreifers<input type="number" min="0" max="100" value="${draft.attackerAvionics}" data-sim-key="attackerAvionics"></label></section>
+  <section class="panel panel-inner"><h2>Verteidigung</h2><h3>Schiffe im Orbit</h3><div class="sim-inputs">${inputRows(FLEET,draft.defenderFleet,"defenderFleet")}</div><h3>Planetare Abwehr</h3><div class="sim-inputs">${inputRows(DEFENSE,draft.defenses,"defenses")}</div><div class="sim-inputs">${[["defenderAvionics","Avionik"],["commandCenter","Kommandozentrale"],["shipyard","Orbitalwerft"]].map(([key,label])=>`<label><span>${label}</span><input type="number" min="0" max="100" value="${draft[key]}" data-sim-key="${key}"></label>`).join("")}</div></section></div>
+  <div class="sim-actions"><button class="primary-button" data-simulate>Schlacht berechnen</button><button class="secondary-button" data-sim-reset>Zurücksetzen</button></div>
+  ${result ? `<section class="panel panel-inner sim-result ${result.won ? "sim-win" : "sim-loss"}"><span class="eyebrow">SIMULATION · KEIN ECHTER KAMPF</span><h2>${result.won ? "Angreifer gewinnt" : "Verteidiger hält stand"}</h2><p>Angriff <strong>${formatNumber(result.attackPower)}</strong> · Abwehr <strong>${formatNumber(result.defensePower)}</strong> · Frachtraum <strong>${formatNumber(result.capacity)}</strong></p><p>Angreifer-Verluste: ${escapeHtml(lossText(result.losses))}</p><p>Verlorene Abwehr: ${escapeHtml(lossText(result.defenseLosses))}</p><small>Beute hängt vom Rohstoffbestand bei Ankunft ab und wird hier nicht vorhergesagt.</small></section>` : ""}`;
+}
 content.addEventListener("error", (event) => {
   if (event.target.tagName === "IMG" && event.target.src.startsWith("https://")) event.target.src = "/assets/research-lab.svg";
 }, true);
 function fleetSelector() {
-  return `<details class="fleet-selector" open><summary>Einsatzflotte zusammenstellen</summary>${Object.entries(FLEET).map(([key,item])=>`<label><span>${SHIPS[key].name} <small>(${state.ships[key]||0} verfügbar)</small></span><input type="number" inputmode="numeric" min="0" max="${state.ships[key]||0}" step="1" value="${raidSelection[key]||0}" data-fleet-key="${key}" aria-label="${SHIPS[key].name} einsetzen"></label>`).join("")}<p>Nur die gewählten Schiffe starten. PvP-Angriffe werden derzeit sofort aufgelöst.</p></details>`;
+  return `<details class="fleet-selector" open><summary>Einsatzflotte zusammenstellen</summary>${Object.entries(FLEET).map(([key,item])=>`<label><span>${SHIPS[key].name} <small>(${state.ships[key]||0} verfügbar)</small></span><input type="number" inputmode="numeric" min="0" max="${state.ships[key]||0}" step="1" value="${raidSelection[key]||0}" data-fleet-key="${key}" aria-label="${SHIPS[key].name} einsetzen"></label>`).join("")}<p>Nur die gewählten Schiffe starten. Angriffe und Spionage brauchen Flugzeit. Der Gegner wird vor der Ankunft gewarnt.</p></details>`;
 }
 function fitGalaxyEmpire() {
   const origins = galaxySensorOrigins.length ? galaxySensorOrigins : [{ position: galaxyOrigin, radius: galaxyRadius }];
@@ -1256,9 +1268,10 @@ function missionCard(mission) {
 }
 function mailboxMessageMarkup(message) {
   const inbound = message.direction === "inbound";
-  return `<article class="mail-card ${inbound && !message.read ? "unread" : ""}"><div class="mail-card-head"><span class="badge">${inbound ? "EINGANG" : "GESENDET"}</span><time>${formatDateTime(message.at)}</time></div><h3>${escapeHtml(message.subject)}</h3><p><b>${inbound ? "Von" : "An"}:</b> ${escapeHtml(inbound ? message.sender : message.recipient)}</p><p>${escapeHtml(message.body)}</p>${inbound ? `<button class="secondary-button" data-reply-to="${escapeHtml(message.sender)}" data-reply-subject="${escapeHtml(message.subject)}">Antworten</button>` : ""}</article>`;
+  return `<article class="mail-card ${inbound && !message.read ? "unread" : ""}"><div class="mail-card-head"><span class="badge">${message.admin ? "ADMIN" : inbound ? "EINGANG" : "GESENDET"}</span><time>${formatDateTime(message.at)}</time></div><h3>${escapeHtml(message.subject)}</h3><p><b>${inbound ? "Von" : "An"}:</b> ${escapeHtml(inbound ? message.sender : message.recipient)}</p><p>${escapeHtml(message.body)}</p>${inbound ? `<button class="secondary-button" data-reply-to="${escapeHtml(message.sender)}" data-reply-subject="${escapeHtml(message.subject)}">Antworten</button>` : ""}</article>`;
 }
 function spyArchiveMarkup(report) {
+  if (report.side === "defender") return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGEALARM</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)} wurde ausgespäht</h3><p>${escapeHtml(report.attackerName || "Angreifer unbekannt")} · ${formatNumber(report.probes)} Sonde${report.probes === 1 ? "" : "n"} erkannt · ${formatNumber(report.intercepted)} abgefangen.</p><p>Prüfe deine Lager und laufenden Anflüge im Dashboard.</p></article>`;
   const stillValid = report.expiresAt > Date.now();
   return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small></article>`;
 }
@@ -1268,10 +1281,9 @@ function combatArchiveMarkup(report) {
 }
 function mailboxEntries() {
   return [
-    ...state.messages.map(item => ({kind:item.direction === "inbound" ? "mail" : "sent", id:item.id, at:item.at, title:item.subject, from:item.direction === "inbound" ? item.sender : item.recipient, preview:item.body, item})),
-    ...state.spyReports.map(item => ({kind:"spy", id:item.id || item.createdAt, at:item.createdAt, title:"Spionagebericht · " + item.signature, from:item.owner || "Aufklärung", preview:"Detailstufe " + item.intelligence + "/5 · " + (item.world ? item.world.fields + " Baufelder" : "Weltparameter verborgen"), item})),
-    ...state.combatReports.map(item => ({kind:"combat", id:item.id || item.at, at:item.at, title:"Kampfbericht · " + (item.won ? "Sieg" : "Verlust"), from:item.opponent, preview:"Angriff " + formatNumber(item.attackPower) + " · Abwehr " + formatNumber(item.defensePower), item})),
-    ...state.notifications.map(item => ({kind:"system", id:item.id, at:item.at, title:item.title, from:"Spielbericht", preview:item.text, item}))
+    ...state.messages.map(item => ({kind:item.direction === "inbound" ? (item.admin ? "admin" : "mail") : "sent", id:item.id, at:item.at, title:item.subject, from:item.direction === "inbound" ? item.sender : item.recipient, preview:item.body, item})),
+    ...state.spyReports.map(item => ({kind:"spy", id:item.id || item.createdAt, at:item.createdAt, title:(item.side === "defender" ? "Spionagealarm · " : "Spionagebericht · ") + item.signature, from:item.side === "defender" ? (item.attackerName || "Unbekannte Signatur") : (item.owner || "Aufklärung"), preview:item.side === "defender" ? `${item.probes} Sonden erkannt · ${item.intercepted} abgefangen` : "Detailstufe " + item.intelligence + "/5 · " + (item.world ? item.world.fields + " Baufelder" : "Weltparameter verborgen"), item})),
+    ...state.combatReports.map(item => ({kind:"combat", id:item.id || item.at, at:item.at, title:"Kampfbericht · " + (item.won ? "Sieg" : "Verlust"), from:item.opponent, preview:"Angriff " + formatNumber(item.attackPower) + " · Abwehr " + formatNumber(item.defensePower), item}))
   ].map(entry => ({...entry, key:entry.kind + ":" + entry.id, unread:entry.kind !== "sent" && !entry.item.read && !state.readReports.includes(entry.kind + ":" + entry.id)})).sort((a,b)=>b.at-a.at);
 }
 function filteredMailboxEntries() {
@@ -1310,13 +1322,13 @@ function messagesView() {
   const all = mailboxEntries();
   const entries = filteredMailboxEntries();
   const selected = entries.find(entry => entry.key === selectedMailboxEntry);
-  const labels = {all:"Alle", unread:"Ungelesen", mail:"Posteingang", sent:"Gesendet", spy:"Spionage", combat:"Kampf", system:"Spielberichte", archive:"Archiv"};
+  const labels = {all:"Alle", unread:"Ungelesen", mail:"Posteingang", sent:"Gesendet", spy:"Spionage", combat:"Kampf", admin:"Admin", archive:"Archiv"};
   let detail = '<div class="empty-state"><strong>Nachricht auswählen</strong>Klicke links auf eine Mail, um den vollständigen Bericht zu lesen.</div>';
   if (selected) {
     const item = selected.item;
-    detail = ["mail","sent"].includes(selected.kind) ? mailboxMessageMarkup(item) : selected.kind === "spy" ? spyArchiveMarkup(item) + reportSection("Flotte",item.ships,SHIPS) + reportSection("Infrastruktur",item.buildings,BUILDINGS) + reportSection("Forschung",item.research,RESEARCH) + reportSection("Planetare Abwehr",item.defenses,DEFENSE) : selected.kind === "combat" ? combatArchiveMarkup(item) : '<article class="mail-card"><span class="badge">SPIELBERICHT</span><h2>' + escapeHtml(item.title) + '</h2><time>' + formatDateTime(item.at) + '</time><p>' + escapeHtml(item.text) + '</p></article>';
+    detail = ["mail","sent","admin"].includes(selected.kind) ? mailboxMessageMarkup(item) : selected.kind === "spy" ? spyArchiveMarkup(item) + (item.side === "defender" ? "" : reportSection("Flotte",item.ships,SHIPS) + reportSection("Infrastruktur",item.buildings,BUILDINGS) + reportSection("Forschung",item.research,RESEARCH) + reportSection("Planetare Abwehr",item.defenses,DEFENSE)) : combatArchiveMarkup(item);
   }
-  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDOKANAL</span><h1>Postfach</h1><p>Direktnachrichten, Kampf-, Spionage- und Spielberichte an einem Ort.</p></div><span class="sector-label">${all.filter(e=>e.unread).length} UNGELESEN</span></section>
+  return `<section class="view-heading"><div><span class="eyebrow">KOMMANDOKANAL</span><h1>Postfach</h1><p>Nur Direktnachrichten, Spionage- und Kampfberichte sowie Nachrichten vom Admin.</p></div><span class="sector-label">${all.filter(e=>e.unread).length} UNGELESEN</span></section>
   <div class="mailbox-filters">${Object.entries(labels).map(([key,label])=>`<button class="secondary-button ${mailboxFilter===key?"active":""}" data-mail-filter="${key}">${label}</button>`).join("")}</div>
   <form id="mailbox-search-form" class="mailbox-search"><input id="mailbox-search" type="search" aria-label="Nachrichten durchsuchen" placeholder="Betreff, Absender oder Text …" value="${escapeHtml(mailboxSearchDraft)}"><button class="primary-button" type="submit">Suchen</button><button class="secondary-button" type="button" data-mail-clear>Zurücksetzen</button></form>
   <div class="mailbox-tools"><button class="secondary-button" data-mail-bulk="select">Alle / keine auswählen</button><button class="secondary-button" data-mail-bulk="read">Als gelesen markieren</button><button class="secondary-button" data-mail-bulk="${mailboxFilter === "archive" ? "restore" : "archive"}">${mailboxFilter === "archive" ? "Zurück ins Postfach" : "Archivieren"}</button><span><b id="mailbox-selected">${mailboxSelection.size}</b> ausgewählt · ${entries.length} Treffer</span></div>
@@ -1414,7 +1426,7 @@ function render() {
   $(".planet-card .eyebrow").textContent = activePlanet().homeworld ? "HEIMATWELT" : "KOLONIE";
   $(".planet-card span:not(.eyebrow)").textContent = activePlanet().coordinates;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
-  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
+  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, simulator: simulatorView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   content.innerHTML = (state.buildBoostUntil > Date.now() ? `<div class="boost-banner">⚡ Bauboost aktiv · ${formatDuration(state.buildBoostUntil - Date.now())} · 20× Tempo für Gebäude, Forschung und Schiffe</div>` : "") + views[activeView]();
   const messageField = content.querySelector('#message-compose textarea[name="body"]');
   if (messageField) messageField.value = messageBody;
@@ -1636,7 +1648,7 @@ content.addEventListener("wheel", event => {
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
-  if (IS_DEMO && !["signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter"].some(key=>button.dataset[key]!==undefined)) {
+  if (IS_DEMO && !["signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter","simulate","simReset"].some(key=>button.dataset[key]!==undefined)) {
     toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return;
   }
   if (button.dataset.playerSearch !== undefined) {
@@ -1644,6 +1656,16 @@ content.addEventListener("click", (event) => {
     if (query.length < 3) { toast("Bitte mindestens drei Zeichen eingeben.", true); return; }
     searchPlayers(query);
     return;
+  }
+  if (button.dataset.simReset !== undefined) { simulationDraft = null; render(); return; }
+  if (button.dataset.simulate !== undefined) {
+    const draft = { attackerFleet:{}, defenderFleet:{}, defenses:{} };
+    content.querySelectorAll("[data-sim-key]").forEach(input => {
+      const amount = Math.max(0, Math.min(1000000, Math.floor(Number(input.value) || 0)));
+      if (input.dataset.simSide) draft[input.dataset.simSide][input.dataset.simKey] = amount;
+      else draft[input.dataset.simKey] = amount;
+    });
+    simulationDraft = draft; render(); return;
   }
   if (button.dataset.messagePlayer) {
     messageRecipient = button.dataset.messagePlayer;

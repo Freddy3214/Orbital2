@@ -129,3 +129,15 @@ body { background:#27251f; }.starfield { background:radial-gradient(ellipse at t
 .flight-route-track { height:1px; background:linear-gradient(90deg,#b59c62,#72aeba); position:relative; }.flight-route-track:before,.flight-route-track:after { content:""; position:absolute; width:5px; height:5px; top:-2px; border:1px solid #dbbd78; border-radius:50%; background:#121820; }.flight-route-track:after { right:0; }
 .flight-route-track i { position:absolute; top:-9px; transform:translateX(-50%); color:#a5daef; font-size:17px; font-style:normal; text-shadow:0 0 10px #83c8f7; }.flight-route.returning i { color:#cbb5ee; text-shadow:0 0 10px #b39ed9; }
 .flight-manifest { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:12px; color:#c1c5ce; font-size:10px; }.flight-phase { color:#e2c17d; letter-spacing:.12em; }
+.sim-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; align-items:start; }
+.sim-grid .panel { min-width:0; }
+.sim-grid h3 { margin:18px 0 8px; }
+.sim-inputs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 14px; }
+.sim-inputs label, .sim-grid label { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.sim-inputs input, .sim-grid input { width:86px; min-width:70px; }
+.sim-actions { display:flex; flex-wrap:wrap; gap:10px; margin:16px 0; }
+.sim-result { border-left:4px solid #d6a24b; }
+.sim-win { border-left-color:#7dbb90; }
+.sim-loss { border-left-color:#d47b71; }
+.command-alerts .notification-high { border-left:3px solid #d47b71; }
+@media (max-width:800px) { .sim-grid { grid-template-columns:1fr; } .sim-inputs { grid-template-columns:1fr; } }

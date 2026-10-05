@@ -32,3 +32,4 @@ export function requestLocale(request) {
   const fallback=String(request.headers["accept-language"]||"de").split(",")[0].trim().toLowerCase().startsWith("de")?"de":"en";
   return {language:country?"de":privateAddress?fallback:"en",country:country||null,source:privateAddress?"browser":"ip"};
 }
+
