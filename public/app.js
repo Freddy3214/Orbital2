@@ -956,6 +956,7 @@ function overviewView() {
   const unreadCount = mailboxEntries().filter(entry => entry.unread).length;
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1>${unreadCount ? `<button class="dashboard-unread" data-open-messages>✉ ${unreadCount} ungelesene ${unreadCount === 1 ? "Nachricht" : "Nachrichten"} · Postfach öffnen →</button>` : ""}<p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Flotten, Baureihen und Meldungen bleiben hier im Blick.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
+    ${state.buildBoostUntil > Date.now() && state.planets.length === 1 ? starterFlightpathMarkup() : ""}
     <div class="grid overview-grid command-overview">
       <section class="panel hero-panel compact-planet">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
@@ -967,18 +968,27 @@ function overviewView() {
     <section class="panel" style="margin-top:15px"><div class="panel-inner"><div class="panel-title"><h2>Planetare Registrierung</h2><span>${state.planets.length} WELT${state.planets.length === 1 ? "" : "EN"}</span></div>${planetRegistryMarkup()}</div></section>
     <div class="tip" style="margin-top:15px"><b>Strategiehinweis</b><span>${strategyTip()}</span></div>`;
 }
-function upgradePathMarkup() {
-  const steps = [
-    { label: "Roboterfabrik", target: "Stufe 2", view: "buildings", done: planetBuildings().roboticsFactory >= 2 },
-    { label: "Forschungslabor", target: "Stufe 1", view: "buildings", done: planetBuildings().researchLab >= 1 },
-    { label: "Energietechnik", target: "Stufe 1", view: "research", done: state.research.energyTech >= 1 },
-    { label: "Verbrennungsantrieb", target: "Stufe 1", view: "research", done: state.research.combustionDrive >= 1 },
-    { label: "Orbitalwerft", target: "Stufe 2", view: "buildings", done: planetBuildings().shipyard >= 2 },
-    { label: "Frachtdrohne", target: "1 Einheit", view: "shipyard", done: state.ships.cargoDrone >= 1 },
+function upgradeSteps() {
+  return [
+    { label: "Roboterfabrik", target: "Stufe 2", view: "buildings", key: "roboticsFactory", done: planetBuildings().roboticsFactory >= 2 },
+    { label: "Forschungslabor", target: "Stufe 1", view: "buildings", key: "researchLab", done: planetBuildings().researchLab >= 1 },
+    { label: "Energietechnik", target: "Stufe 1", view: "research", key: "energyTech", done: state.research.energyTech >= 1 },
+    { label: "Verbrennungsantrieb", target: "Stufe 1", view: "research", key: "combustionDrive", done: state.research.combustionDrive >= 1 },
+    { label: "Orbitalwerft", target: "Stufe 2", view: "buildings", key: "shipyard", done: planetBuildings().shipyard >= 2 },
+    { label: "Frachtdrohne", target: "1 Einheit", view: "shipyard", key: "cargoDrone", done: state.ships.cargoDrone >= 1 },
   ];
+}
+function starterFlightpathMarkup() {
+  const steps = upgradeSteps();
+  const completed = steps.filter(step => step.done).length;
+  const next = steps.find(step => !step.done);
+  return `<section class="starter-flightpath" aria-label="Startplan"><div><span class="eyebrow">DEIN STARTPLAN · ${completed}/${steps.length} ERLEDIGT</span><strong>${next ? `Als Nächstes: ${next.label} ${next.target}` : "Grundausbau geschafft – bereit für die Galaxie"}</strong><small>Bauboost noch ${formatDuration(state.buildBoostUntil - Date.now())} · Bauwarteschlange ${buildingQueue().length}/5</small></div><button class="primary-button" data-view-jump="${next?.view || "galaxy"}" ${next ? `data-focus-entity="${next.key}"` : ""}>${next ? "Nächsten Schritt planen" : "Sternenkarte öffnen"} →</button></section>`;
+}
+function upgradePathMarkup() {
+  const steps = upgradeSteps();
   const next = steps.find(step => !step.done);
   const current = next && (buildingQueue().length || researchOrders().length || shipOrders().length);
-  return `${next ? `<div class="next-step"><span class="eyebrow">${current ? "WÄHREND DER BAU LÄUFT" : "JETZT WEITERMACHEN"}</span><strong>${next.label} · ${next.target}</strong><p>${current ? "Du kannst weitere Aufträge in die Warteschlange setzen." : "Dein nächster Schritt ist bereit. Nutze den Startboost für eine volle Warteschlange."}</p><button class="primary-button" data-view-jump="${next.view}">${current ? "Weitere Aufträge planen" : "Jetzt ausbauen"} →</button></div>` : `<div class="next-step"><strong>Grundausbau geschafft!</strong><p>Erkunde die Galaxie und plane deine nächste Kolonie.</p><button class="primary-button" data-view-jump="galaxy">Zur Sternenkarte →</button></div>`}<ol class="upgrade-path">${steps.map((step) => `<li class="${step.done ? "done" : step === next ? "current" : ""}"><span>${step.done ? "✓" : "○"}</span><strong>${step.label}</strong><small>${step.target}</small></li>`).join("")}</ol>`;
+  return `${next ? `<div class="next-step"><span class="eyebrow">${current ? "WÄHREND DER BAU LÄUFT" : "JETZT WEITERMACHEN"}</span><strong>${next.label} · ${next.target}</strong><p>${current ? "Du kannst weitere Aufträge in die Warteschlange setzen." : "Dein nächster Schritt ist bereit. Nutze den Startboost für eine volle Warteschlange."}</p><button class="primary-button" data-view-jump="${next.view}" data-focus-entity="${next.key}">${current ? "Weitere Aufträge planen" : "Jetzt ausbauen"} →</button></div>` : `<div class="next-step"><strong>Grundausbau geschafft!</strong><p>Erkunde die Galaxie und plane deine nächste Kolonie.</p><button class="primary-button" data-view-jump="galaxy">Zur Sternenkarte →</button></div>`}<ol class="upgrade-path">${steps.map((step) => `<li class="${step.done ? "done" : step === next ? "current" : ""}"><span>${step.done ? "✓" : "○"}</span><strong>${step.label}</strong><small>${step.target}</small></li>`).join("")}</ol>`;
 }
 function planetRegistryMarkup() {
   return `<div class="planet-registry">${state.planets.map((planet) => { const usage = fieldUsage(planet); const active = planet.id === activePlanet().id; return `<article class="planet-mini-card ${active ? "active" : ""}">${planetArtMarkup(planet, "planet-mini-art")}<div><span class="badge">${escapeHtml(planet.classification)}</span><h3>${escapeHtml(planet.name)}</h3><p>${escapeHtml(planet.coordinates)}</p><strong>${formatNumber(usage)} / ${formatNumber(planet.fields)} Baufelder</strong><div class="planet-card-actions"><button type="button" class="secondary-button" data-planet-id="${escapeHtml(planet.id)}">${active ? "Aktive Welt" : "Auswählen"}</button><button type="button" class="secondary-button" data-rename-planet="${escapeHtml(planet.id)}">Umbenennen</button></div></div></article>`; }).join("")}</div>`;
@@ -1718,7 +1728,13 @@ content.addEventListener("click", (event) => {
   if (button.dataset.mailBulk) { applyMailboxAction(button.dataset.mailBulk); return; }
   if (button.dataset.mailClear !== undefined) { mailboxSearch = ""; mailboxSearchDraft = ""; mailboxSelection.clear(); render(); return; }
   if (button.dataset.openMessages !== undefined) { activeView = "messages"; mailboxFilter = "unread"; selectedMailboxEntry = null; render(); return; }
-  if (button.dataset.viewJump) { activeView = button.dataset.viewJump; render(); if (activeView === "galaxy") fetchGalaxy({force:true}); return; }
+  if (button.dataset.viewJump) {
+    activeView = button.dataset.viewJump;
+    render();
+    if (button.dataset.focusEntity) content.querySelector(`.entity-card--${button.dataset.focusEntity}`)?.scrollIntoView({ block: "center", behavior: "instant" });
+    if (activeView === "galaxy") fetchGalaxy({force:true});
+    return;
+  }
   if (button.dataset.openSpyTarget) { openSpyTarget(button.dataset.openSpyTarget); return; }
   if (button.dataset.openGalaxy !== undefined) { activeView = "galaxy"; render(); fetchGalaxy({force:true}); return; }
   if (button.dataset.transferAll !== undefined) { transferSelection = Object.fromEntries(["cargoDrone","smallTransport","mediumTransport","largeTransport"].map(key=>[key,state.ships[key] || 0])); render(); return; }
