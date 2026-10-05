@@ -10,7 +10,6 @@ const RESOURCE_LABELS = { metal: "Metall", crystal: "Kristall", tritium: "Tritiu
 // Embedded icons avoid missing asset paths and reload flicker during resource updates.
 const RESOURCE_ICONS = {"metal":"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22Drei%20Metallbarren%22%3E%0A%20%20%3Cdefs%3E%3ClinearGradient%20id%3D%22steel%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20stop-color%3D%22%23fbffff%22%2F%3E%3Cstop%20offset%3D%22.35%22%20stop-color%3D%22%239eb6bf%22%2F%3E%3Cstop%20offset%3D%22.72%22%20stop-color%3D%22%23526c78%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23c9dde1%22%2F%3E%3C%2FlinearGradient%3E%3Cfilter%20id%3D%22glow%22%3E%3CfeGaussianBlur%20stdDeviation%3D%221.4%22%20result%3D%22b%22%2F%3E%3CfeMerge%3E%3CfeMergeNode%20in%3D%22b%22%2F%3E%3CfeMergeNode%20in%3D%22SourceGraphic%22%2F%3E%3C%2FfeMerge%3E%3C%2Ffilter%3E%3C%2Fdefs%3E%0A%20%20%3Cg%20stroke%3D%22%23dceef0%22%20stroke-width%3D%221.2%22%20stroke-linejoin%3D%22round%22%20filter%3D%22url(%23glow)%22%3E%3Cpath%20fill%3D%22url(%23steel)%22%20d%3D%22m12%2037%209-9h27l7%209-8%209H20z%22%2F%3E%3Cpath%20fill%3D%22url(%23steel)%22%20d%3D%22m8%2047%209-9h27l7%209-8%209H16z%22%2F%3E%3Cpath%20fill%3D%22url(%23steel)%22%20d%3D%22m16%2027%209-9h27l7%209-8%209H24z%22%2F%3E%3C%2Fg%3E%0A%20%20%3Cpath%20d%3D%22M25%2022h22l3%204H22zM21%2041h23l3%204H18z%22%20fill%3D%22%23fff%22%20opacity%3D%22.45%22%2F%3E%0A%3C%2Fsvg%3E%0A","tritium":"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22Tritium-Reagenzglas%22%3E%0A%20%20%3Cdefs%3E%3ClinearGradient%20id%3D%22glass%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20stop-color%3D%22%23efffff%22%2F%3E%3Cstop%20offset%3D%22.42%22%20stop-color%3D%22%239ac0c8%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23385a63%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22acid%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%3Cstop%20stop-color%3D%22%23d5ff69%22%2F%3E%3Cstop%20offset%3D%22.35%22%20stop-color%3D%22%2375ef31%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%231c9a3a%22%2F%3E%3C%2FlinearGradient%3E%3Cfilter%20id%3D%22neon%22%3E%3CfeGaussianBlur%20stdDeviation%3D%222.1%22%20result%3D%22b%22%2F%3E%3CfeMerge%3E%3CfeMergeNode%20in%3D%22b%22%2F%3E%3CfeMergeNode%20in%3D%22SourceGraphic%22%2F%3E%3C%2FfeMerge%3E%3C%2Ffilter%3E%3C%2Fdefs%3E%0A%20%20%3Cg%20filter%3D%22url(%23neon)%22%3E%3Cpath%20d%3D%22M24%207h16v7l-4%205v28c0%207-5%2010-12%2010s-12-3-12-10V19l4-5V7h8z%22%20fill%3D%22url(%23glass)%22%20stroke%3D%22%23d8ffff%22%20stroke-width%3D%222%22%2F%3E%3Cpath%20d%3D%22M15%2036h18v11c0%205-3%207-9%207s-9-2-9-7z%22%20fill%3D%22url(%23acid)%22%2F%3E%3Cpath%20d%3D%22M17%2042c4-3%209%203%2016-1v6c0%205-3%207-9%207s-9-2-9-7z%22%20fill%3D%22%2353cb35%22%20opacity%3D%22.8%22%2F%3E%3Ccircle%20cx%3D%2227%22%20cy%3D%2229%22%20r%3D%222%22%20fill%3D%22%23bfff76%22%2F%3E%3Ccircle%20cx%3D%2222%22%20cy%3D%2239%22%20r%3D%221.6%22%20fill%3D%22%23e1ff9d%22%2F%3E%3C%2Fg%3E%3Cpath%20d%3D%22M18%2010h20M20%2017h16%22%20stroke%3D%22%23e9ffff%22%20stroke-width%3D%222%22%20opacity%3D%22.75%22%2F%3E%0A%3C%2Fsvg%3E%0A","crystal":"data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2064%2064%22%20role%3D%22img%22%20aria-label%3D%22Blauer%20Bergkristall%22%3E%0A%20%20%3Cdefs%3E%3ClinearGradient%20id%3D%22blue%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20stop-color%3D%22%23e9ffff%22%2F%3E%3Cstop%20offset%3D%22.28%22%20stop-color%3D%22%238df1ff%22%2F%3E%3Cstop%20offset%3D%22.65%22%20stop-color%3D%22%23298bff%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23174782%22%2F%3E%3C%2FlinearGradient%3E%3Cfilter%20id%3D%22g%22%3E%3CfeGaussianBlur%20stdDeviation%3D%222%22%20result%3D%22b%22%2F%3E%3CfeMerge%3E%3CfeMergeNode%20in%3D%22b%22%2F%3E%3CfeMergeNode%20in%3D%22SourceGraphic%22%2F%3E%3C%2FfeMerge%3E%3C%2Ffilter%3E%3C%2Fdefs%3E%0A%20%20%3Cg%20fill%3D%22url(%23blue)%22%20stroke%3D%22%23b9fbff%22%20stroke-width%3D%221.25%22%20stroke-linejoin%3D%22round%22%20filter%3D%22url(%23g)%22%3E%3Cpath%20d%3D%22m30%207%2012%2018-7%2030H20l-7-24z%22%2F%3E%3Cpath%20d%3D%22m15%2023%2012%2011-4%2022H9L5%2036z%22%2F%3E%3Cpath%20d%3D%22m44%2020%2013%2018-5%2018H37l-4-21z%22%2F%3E%3C%2Fg%3E%0A%20%20%3Cpath%20d%3D%22m30%207-2%2045%2014-27zM15%2023l8%2033%204-22zM44%2020l-3%2031%2016-13z%22%20fill%3D%22%23fff%22%20opacity%3D%22.28%22%2F%3E%0A%3C%2Fsvg%3E%0A"};
 const LEVEL_CAP = 100;
-const PLANET_SPIN_MS = 50_000;
 
 const BUILDINGS = {
   metalMine: {
@@ -368,6 +367,7 @@ function createColony() {
     buildingQueue: [],
     shipQueue: null,
     defenses: {},
+    productionLoad: { metal: 100, crystal: 100, tritium: 100 },
     resources: { metal: 0, crystal: 0, tritium: 0, lastUpdate: Date.now() },
   };
 }
@@ -411,6 +411,7 @@ function ensureStateShape() {
     shipQueue: planet.shipQueue || (legacyShipQueue?.planetId === planet.id || (!legacyShipQueue?.planetId && (planet.homeworld || index === 0)) ? legacyShipQueue : null),
     shipWaiting: Array.isArray(planet.shipWaiting) ? planet.shipWaiting : [],
     defenses: planet.defenses || {},
+    productionLoad: Object.fromEntries(Object.keys(RESOURCE_LABELS).map(key => [key, productionLoad(planet, key)])),
     resources: { metal: 0, crystal: 0, tritium: 0, lastUpdate: Date.now(), ...(planet.resources || (planet.homeworld || index === 0 ? state.resources : {})) },
   }));
   for (const planet of state.planets) {
@@ -470,8 +471,24 @@ function projectedBuildingState() {
 }
 function planetArtMarkup(planet, className = "") {
   const type = PLANET_TYPES[planet.type] || PLANET_TYPES.temperate;
-  const spinDelay = -(Date.now() % PLANET_SPIN_MS);
-  return `<span class="planet-art ${className}" style="--planet-position:${type.position};--planet-spin-delay:${spinDelay}ms" role="img" aria-label="${escapeHtml(type.name)}: ${escapeHtml(type.terrain)}"><i aria-hidden="true"></i></span>`;
+  return `<span class="planet-art ${className}" style="--planet-position:${type.position}" role="img" aria-label="${escapeHtml(type.name)}: ${escapeHtml(type.terrain)}"></span>`;
+}
+
+async function openSpyTarget(targetId) {
+  activeView = "galaxy";
+  await fetchGalaxy({ force: true });
+  const system = galaxyIntel.find(entry => entry.slots?.some(slot => slot.targetId === targetId));
+  if (!system) {
+    render();
+    toast("Ziel derzeit außerhalb deiner Sensorreichweite. Erforsche Tiefraumsensorik oder wähle eine näher gelegene Kolonie.", true);
+    return;
+  }
+  selectedSignalId = system.id;
+  selectedOrbitTargetId = targetId;
+  galaxyOffset = { x: system.position.x - galaxyOrigin.x, y: system.position.y - galaxyOrigin.y };
+  raidSelection = {};
+  render();
+  content.querySelector(".fleet-selector")?.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 function entityArtMarkup(config) {
   if (config.atlas) return `<span class="entity-art atlas-art" style="--art-image:url('${config.atlas}');--art-ratio:${config.atlasRatio};--art-x:${config.artX};--art-y:${config.artY}" role="img" aria-label="Illustration ${escapeHtml(config.name)}"></span>`;
@@ -483,10 +500,16 @@ function crystalOutput(level) { return Math.floor(20 * level * 1.1 ** level) + 1
 function tritiumOutput(level) { return Math.floor(10 * level * 1.1 ** level); }
 function energySupply(level) { return Math.floor(20 * level * 1.1 ** level); }
 function storageCap(resource, level = planetBuildings()[`${resource}Storage`]) { return Math.floor(25000 * 1.65 ** level * (1 + (state.research.storageTech || 0) * .1)); }
+function productionLoad(planet = activePlanet(), resource) {
+  const value = Number(planet?.productionLoad?.[resource]);
+  return Number.isFinite(value) ? Math.max(0, Math.min(100, Math.floor(value / 10) * 10)) : 100;
+}
 function energyStats(planet = activePlanet()) {
   const b = planetBuildings(planet);
   const supply = energySupply(b.solarPlant) * (1 + state.research.energyTech * .05);
-  const demand = Math.floor(10 * b.metalMine * 1.1 ** b.metalMine) + Math.floor(10 * b.crystalMine * 1.1 ** b.crystalMine) + Math.floor(20 * b.tritiumSynthesizer * 1.1 ** b.tritiumSynthesizer);
+  const demand = Math.floor(10 * b.metalMine * 1.1 ** b.metalMine * productionLoad(planet, "metal") / 100)
+    + Math.floor(10 * b.crystalMine * 1.1 ** b.crystalMine * productionLoad(planet, "crystal") / 100)
+    + Math.floor(20 * b.tritiumSynthesizer * 1.1 ** b.tritiumSynthesizer * productionLoad(planet, "tritium") / 100);
   const efficiency = demand === 0 ? 1 : Math.min(1, supply / demand);
   return { supply, demand, efficiency, net: supply - demand };
 }
@@ -495,9 +518,9 @@ function production(planet = activePlanet()) {
   const efficiency = energyStats(planet).efficiency;
   const plasma = 1 + state.research.plasmaTheory * .03;
   return {
-    metal: metalOutput(b.metalMine) * efficiency * plasma,
-    crystal: crystalOutput(b.crystalMine) * efficiency * plasma,
-    tritium: tritiumOutput(b.tritiumSynthesizer) * efficiency * plasma,
+    metal: metalOutput(b.metalMine) * productionLoad(planet, "metal") / 100 * efficiency * plasma,
+    crystal: crystalOutput(b.crystalMine) * productionLoad(planet, "crystal") / 100 * efficiency * plasma,
+    tritium: tritiumOutput(b.tritiumSynthesizer) * productionLoad(planet, "tritium") / 100 * efficiency * plasma,
   };
 }
 function playerScore() {
@@ -827,6 +850,7 @@ function openGame(payload) {
   $("#commander-name").textContent = state.commander;
   restoreTheme();
   $("#commander-gate").classList.add("hidden");
+  $("#gate-music-player").src = "about:blank";
   $("#app").classList.remove("is-hidden");
   render();
   fetchLeaderboard();
@@ -867,6 +891,7 @@ async function logout() {
   messageBody = "";
   $("#app").classList.add("is-hidden");
   $("#commander-gate").classList.remove("hidden");
+  $("#gate-music-player").src = "https://www.youtube.com/embed/8_5lauY-XzQ?autoplay=1&playsinline=1&controls=1";
   $("#password-input").value = "";
   setGateMode("login");
 }
@@ -928,8 +953,9 @@ function overviewView() {
   const rate = production();
   const planet = activePlanet();
   const activeOrders = buildingQueue().length + researchOrders().length + shipOrders().length;
+  const unreadCount = mailboxEntries().filter(entry => entry.unread).length;
   return `
-    <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1><p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Flotten, Baureihen und Meldungen bleiben hier im Blick.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
+    <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1>${unreadCount ? `<button class="dashboard-unread" data-open-messages>✉ ${unreadCount} ungelesene ${unreadCount === 1 ? "Nachricht" : "Nachrichten"} · Postfach öffnen →</button>` : ""}<p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Flotten, Baureihen und Meldungen bleiben hier im Blick.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
     <div class="grid overview-grid command-overview">
       <section class="panel hero-panel compact-planet">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
@@ -943,14 +969,16 @@ function overviewView() {
 }
 function upgradePathMarkup() {
   const steps = [
-    { label: "Roboterfabrik", target: "Stufe 2", done: planetBuildings().roboticsFactory >= 2 },
-    { label: "Forschungslabor", target: "Stufe 1", done: planetBuildings().researchLab >= 1 },
-    { label: "Energietechnik", target: "Stufe 1", done: state.research.energyTech >= 1 },
-    { label: "Verbrennungsantrieb", target: "Stufe 1", done: state.research.combustionDrive >= 1 },
-    { label: "Orbitalwerft", target: "Stufe 2", done: planetBuildings().shipyard >= 2 },
-    { label: "Frachtdrohne", target: "1 Einheit", done: state.ships.cargoDrone >= 1 },
+    { label: "Roboterfabrik", target: "Stufe 2", view: "buildings", done: planetBuildings().roboticsFactory >= 2 },
+    { label: "Forschungslabor", target: "Stufe 1", view: "buildings", done: planetBuildings().researchLab >= 1 },
+    { label: "Energietechnik", target: "Stufe 1", view: "research", done: state.research.energyTech >= 1 },
+    { label: "Verbrennungsantrieb", target: "Stufe 1", view: "research", done: state.research.combustionDrive >= 1 },
+    { label: "Orbitalwerft", target: "Stufe 2", view: "buildings", done: planetBuildings().shipyard >= 2 },
+    { label: "Frachtdrohne", target: "1 Einheit", view: "shipyard", done: state.ships.cargoDrone >= 1 },
   ];
-  return `<ol class="upgrade-path">${steps.map((step) => `<li class="${step.done ? "done" : ""}"><span>${step.done ? "✓" : "○"}</span><strong>${step.label}</strong><small>${step.target}</small></li>`).join("")}</ol>`;
+  const next = steps.find(step => !step.done);
+  const current = next && (buildingQueue().length || researchOrders().length || shipOrders().length);
+  return `${next ? `<div class="next-step"><span class="eyebrow">${current ? "WÄHREND DER BAU LÄUFT" : "JETZT WEITERMACHEN"}</span><strong>${next.label} · ${next.target}</strong><p>${current ? "Du kannst weitere Aufträge in die Warteschlange setzen." : "Dein nächster Schritt ist bereit. Nutze den Startboost für eine volle Warteschlange."}</p><button class="primary-button" data-view-jump="${next.view}">${current ? "Weitere Aufträge planen" : "Jetzt ausbauen"} →</button></div>` : `<div class="next-step"><strong>Grundausbau geschafft!</strong><p>Erkunde die Galaxie und plane deine nächste Kolonie.</p><button class="primary-button" data-view-jump="galaxy">Zur Sternenkarte →</button></div>`}<ol class="upgrade-path">${steps.map((step) => `<li class="${step.done ? "done" : step === next ? "current" : ""}"><span>${step.done ? "✓" : "○"}</span><strong>${step.label}</strong><small>${step.target}</small></li>`).join("")}</ol>`;
 }
 function planetRegistryMarkup() {
   return `<div class="planet-registry">${state.planets.map((planet) => { const usage = fieldUsage(planet); const active = planet.id === activePlanet().id; return `<article class="planet-mini-card ${active ? "active" : ""}">${planetArtMarkup(planet, "planet-mini-art")}<div><span class="badge">${escapeHtml(planet.classification)}</span><h3>${escapeHtml(planet.name)}</h3><p>${escapeHtml(planet.coordinates)}</p><strong>${formatNumber(usage)} / ${formatNumber(planet.fields)} Baufelder</strong><div class="planet-card-actions"><button type="button" class="secondary-button" data-planet-id="${escapeHtml(planet.id)}">${active ? "Aktive Welt" : "Auswählen"}</button><button type="button" class="secondary-button" data-rename-planet="${escapeHtml(planet.id)}">Umbenennen</button></div></div></article>`; }).join("")}</div>`;
@@ -1087,10 +1115,13 @@ function storageForecast(amount, capacity, hourlyRate) {
 }
 function economyView() {
   const rates = production();
-  const detail = tablePanel(`Wirtschaft · ${escapeHtml(activePlanet().name)}`, ["Rohstoff", "Vorrat / Kapazität", "Produktion / Stunde", "Produktion / Tag", "Lagerprognose"], Object.keys(RESOURCE_LABELS).map(key => {
+  const energy = energyStats();
+  const controls = `<section class="panel panel-inner production-control"><h2>Produktionssteuerung · ${escapeHtml(activePlanet().name)}</h2><p>Regle jede Mine in 10-%-Schritten. Weniger Auslastung spart Energie; bei Energiemangel werden die verbleibenden Anlagen proportional gedrosselt.</p><div class="production-control-stats"><span>Energie erzeugt <strong>${formatNumber(energy.supply)}</strong></span><span>Verbrauch <strong>${formatNumber(energy.demand)}</strong></span><span class="${energy.net < 0 ? "warning" : "positive"}">Bilanz <strong>${formatNumber(energy.net)}</strong></span><span>Effizienz <strong>${Math.round(energy.efficiency * 100)} %</strong></span></div></section>`;
+  const detail = tablePanel(`Wirtschaft · ${escapeHtml(activePlanet().name)}`, ["Rohstoff", "Auslastung", "Vorrat / Kapazität", "Produktion / Stunde", "Produktion / Tag", "Lagerprognose"], Object.keys(RESOURCE_LABELS).map(key => {
     const cap = storageCap(key), amount = state.resources[key] || 0;
     const forecast = storageForecast(amount, cap, rates[key]);
-    return `<tr><td>${resourceIconMarkup(key)} ${RESOURCE_LABELS[key]}</td><td>${formatNumber(amount)} / ${formatNumber(cap)}</td><td>+${formatNumber(rates[key])}</td><td>+${formatNumber(rates[key] * 24)}</td><td class="${forecast.warning ? "warning" : ""}">${forecast.label}</td></tr>`;
+    const load = productionLoad(activePlanet(), key);
+    return `<tr><td>${resourceIconMarkup(key)} ${RESOURCE_LABELS[key]}</td><td><select data-production-load="${key}" aria-label="${RESOURCE_LABELS[key]}-Auslastung" ${IS_DEMO ? "disabled" : ""}>${Array.from({length:11},(_,i)=>`<option value="${i*10}" ${load===i*10?"selected":""}>${i*10} %</option>`).join("")}</select></td><td>${formatNumber(amount)} / ${formatNumber(cap)}</td><td>+${formatNumber(rates[key])}</td><td>+${formatNumber(rates[key] * 24)}</td><td class="${forecast.warning ? "warning" : ""}">${forecast.label}</td></tr>`;
   }));
   const totals = { metal: 0, crystal: 0, tritium: 0 };
   const worlds = state.planets.map(planet => {
@@ -1100,7 +1131,7 @@ function economyView() {
     return `<tr class="${planet.id === state.activePlanetId ? "selected" : ""}"><td>${escapeHtml(planet.name)}${planet.id === state.activePlanetId ? " · aktiv" : ""}</td><td class="${energy.efficiency < 1 ? "warning" : "positive"}">${Math.round(energy.efficiency * 100)} %</td><td>${formatNumber(energy.supply)} / ${formatNumber(energy.demand)}</td>${Object.keys(RESOURCE_LABELS).map(key => `<td>${formatNumber(output[key])} / ${formatNumber(output[key] * 24)}</td>`).join("")}<td class="${full.length ? "warning" : ""}">${full.length ? `Volle Lager: ${full.map(key => RESOURCE_LABELS[key]).join(", ")}` : "Lager frei"}</td></tr>`;
   });
   worlds.push(`<tr><th>Gesamtes Imperium</th><td>—</td><td>—</td>${Object.keys(RESOURCE_LABELS).map(key => `<th>${formatNumber(totals[key])} / ${formatNumber(totals[key] * 24)}</th>`).join("")}<td>Stunde / Tag</td></tr>`);
-  return detail + `<p class="view-note">Prognose bei unveränderter Energieversorgung, ohne neue Aufträge oder Konvois. Volle Lager stoppen die weitere Einlagerung; vorhandene Vorräte bleiben erhalten.</p>` + tablePanel("Planetenvergleich", ["Welt", "Effizienz", "Energie + / −", "Metall h / Tag", "Kristall h / Tag", "Tritium h / Tag", "Lagerstatus"], worlds) + `<p class="view-note">Angezeigt wird die mögliche Produktion; bei vollen Lagern wird nichts mehr eingelagert. Konvois transportieren Vorräte zwischen eigenen Welten.</p>`;
+  return controls + detail + `<p class="view-note">Prognose bei unveränderter Energieversorgung, ohne neue Aufträge oder Konvois. Volle Lager stoppen die weitere Einlagerung; vorhandene Vorräte bleiben erhalten.</p>` + tablePanel("Planetenvergleich", ["Welt", "Effizienz", "Energie + / −", "Metall h / Tag", "Kristall h / Tag", "Tritium h / Tag", "Lagerstatus"], worlds) + `<p class="view-note">Angezeigt wird die mögliche Produktion; bei vollen Lagern wird nichts mehr eingelagert. Konvois transportieren Vorräte zwischen eigenen Welten.</p>`;
 }
 function statisticsView() {
   const categories = [["Gebäude", state.planets.flatMap((planet) => Object.values(planetBuildings(planet))).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
@@ -1190,7 +1221,7 @@ function galaxyInspector() {
   const slotList = `<div class="orbit-list" aria-label="Orbitalpositionen 1 bis 13">${system.slots.map((slot) => slot.empty
     ? `<div class="orbit-slot empty"><strong>${slot.position}</strong><span>${slot.unexplored ? "Unbekannter Orbit" : "Leerer Orbit"}</span><small>—</small></div>`
     : `<button class="orbit-slot ${slot.own ? "own" : slot.free ? "free" : "occupied"} ${slot.targetId === selectedOrbitTargetId ? "selected" : ""}" data-orbit-target="${escapeHtml(slot.targetId)}"><strong>${slot.position}</strong><span>${escapeHtml(slot.name)}</span><small>${slot.own ? "Eigene Kolonie" : slot.free ? "Frei · unbekannte Größe" : `Spieler · ${escapeHtml(slot.owner || "Unbekannt")}`}</small></button>`).join("")}</div>`;
-  const summary = `<span class="eyebrow">${galaxyCoordinates(system.position)} · ${system.distance} SEKTOREN</span><h2>${escapeHtml(system.signature)}</h2><p>${system.planetCount} sichtbare Welten · ${system.occupiedCount} bewohnt · ${system.freeCount} frei</p>${slotList}`;
+  const summary = `<div class="system-nav"><button class="secondary-button" data-system-step="-1" aria-label="Vorheriges Sternsystem">←</button><span class="eyebrow">${galaxyCoordinates(system.position)} · ${system.distance} SEKTOREN</span><button class="secondary-button" data-system-step="1" aria-label="Nächstes Sternsystem">→</button></div><h2>${escapeHtml(system.signature)}</h2><p>${system.planetCount} sichtbare Welten · ${system.occupiedCount} bewohnt · ${system.freeCount} frei</p>${slotList}`;
   if (!target) return `<aside class="galaxy-inspector">${summary}<div class="intel-locked">Wähle eine belegte Position für Spionage oder Angriff – oder eine freie Welt zur Kolonisierung.</div></aside>`;
   if (target.own) return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">EIGENE KOLONIE · POSITION ${target.position}</span><h3>${escapeHtml(target.name)}</h3><p>Diese Welt erweitert dein gemeinsames Sensornetz. Alle Kolonien bleiben gleichzeitig sichtbar.</p><button class="primary-button" data-planet-id="${escapeHtml(target.planetId)}">Als aktive Welt auswählen</button></section></aside>`;
   if (target.free) { const atLimit = state.planets.length >= 8; return `<aside class="galaxy-inspector">${summary}<section class="orbit-action"><span class="eyebrow">POSITION ${target.position} · FREIE WELT</span><h3>${escapeHtml(target.name)}</h3><p>Größe und Beschaffenheit werden erst bei der Besiedlung bekannt. Ein Kolonieschiff wird verbraucht.</p><button class="primary-button" data-colonize="${escapeHtml(target.targetId)}" ${!state.ships.colonyShip || actionBusy || atLimit ? "disabled" : ""}>${atLimit ? "Planetenlimit 8 erreicht" : state.ships.colonyShip ? "Kolonisieren · 1 Kolonieschiff" : "Kolonieschiff erforderlich"}</button></section></aside>`; }
@@ -1273,7 +1304,7 @@ function mailboxMessageMarkup(message) {
 function spyArchiveMarkup(report) {
   if (report.side === "defender") return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGEALARM</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)} wurde ausgespäht</h3><p>${escapeHtml(report.attackerName || "Angreifer unbekannt")} · ${formatNumber(report.probes)} Sonde${report.probes === 1 ? "" : "n"} erkannt · ${formatNumber(report.intercepted)} abgefangen.</p><p>Prüfe deine Lager und laufenden Anflüge im Dashboard.</p></article>`;
   const stillValid = report.expiresAt > Date.now();
-  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small></article>`;
+  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small>${stillValid && report.targetId ? `<div class="report-actions"><button class="primary-button" data-open-spy-target="${escapeHtml(report.targetId)}">Flotte zum Angriff auswählen →</button><small>Öffnet das Ziel in der Sternenkarte. Der Angriff startet erst nach deiner Bestätigung.</small></div>` : ""}</article>`;
 }
 function combatArchiveMarkup(report) {
   const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") || "keine Beute";
@@ -1605,6 +1636,15 @@ content.addEventListener("input", event => {
   }
   if (event.target.id === "transfer-destination") transferDraft.destination = event.target.value;
 });
+content.addEventListener("change", event => {
+  const key = event.target.dataset.productionLoad;
+  if (!key || !Object.hasOwn(RESOURCE_LABELS, key)) return;
+  if (IS_DEMO || isSaving || actionBusy) { render(); return; }
+  synchronize();
+  activePlanet().productionLoad[key] = Math.max(0, Math.min(100, Math.floor(Number(event.target.value) / 10) * 10));
+  render();
+  save({ quiet: true });
+});
 content.addEventListener("submit", event => {
   if (IS_DEMO) { event.preventDefault(); toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return; }
   if (event.target.id === "mailbox-search-form") { event.preventDefault(); mailboxSearch = mailboxSearchDraft.trim(); mailboxSelection.clear(); render(); }
@@ -1677,6 +1717,9 @@ content.addEventListener("click", (event) => {
   if (button.dataset.mailFilter) { mailboxFilter = button.dataset.mailFilter; mailboxSelection.clear(); render(); return; }
   if (button.dataset.mailBulk) { applyMailboxAction(button.dataset.mailBulk); return; }
   if (button.dataset.mailClear !== undefined) { mailboxSearch = ""; mailboxSearchDraft = ""; mailboxSelection.clear(); render(); return; }
+  if (button.dataset.openMessages !== undefined) { activeView = "messages"; mailboxFilter = "unread"; selectedMailboxEntry = null; render(); return; }
+  if (button.dataset.viewJump) { activeView = button.dataset.viewJump; render(); if (activeView === "galaxy") fetchGalaxy({force:true}); return; }
+  if (button.dataset.openSpyTarget) { openSpyTarget(button.dataset.openSpyTarget); return; }
   if (button.dataset.openGalaxy !== undefined) { activeView = "galaxy"; render(); fetchGalaxy({force:true}); return; }
   if (button.dataset.transferAll !== undefined) { transferSelection = Object.fromEntries(["cargoDrone","smallTransport","mediumTransport","largeTransport"].map(key=>[key,state.ships[key] || 0])); render(); return; }
   if (button.dataset.transferBack !== undefined) { transferStep = Math.max(1,transferStep-1); render(); return; }
@@ -1709,6 +1752,16 @@ content.addEventListener("click", (event) => {
       galaxyOffset = { x: origin.position.x - galaxyOrigin.x, y: origin.position.y - galaxyOrigin.y };
       galaxyZoom = Math.max(.5, Math.min(5, galaxySpan / Math.max(44, origin.radius * 2.6)));
     }
+    render(); return;
+  }
+  if (button.dataset.systemStep) {
+    const index = galaxyIntel.findIndex(entry => entry.id === selectedSignalId);
+    if (index < 0 || !galaxyIntel.length) return;
+    const next = galaxyIntel[(index + Number(button.dataset.systemStep) + galaxyIntel.length) % galaxyIntel.length];
+    selectedSignalId = next.id;
+    selectedOrbitTargetId = null;
+    raidSelection = {};
+    galaxyOffset = { x: next.position.x - galaxyOrigin.x, y: next.position.y - galaxyOrigin.y };
     render(); return;
   }
   if (button.dataset.signalId) {
@@ -1793,6 +1846,9 @@ $("#theme-switch").addEventListener("change", event => {
 });
 
 setGateMode("register");
+$("#gate-music-retry").addEventListener("click", () => {
+  $("#gate-music-player").src = "https://www.youtube.com/embed/8_5lauY-XzQ?autoplay=1&playsinline=1&controls=1";
+});
 document.addEventListener("orbital-language-change", () => { if (state) render(); });
 initLanguage();
 restoreSession();
