@@ -29,7 +29,9 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
     for (const key of ["metal", "crystal", "tritium"]) {
       assert.equal(state.resources[key], 100_000);
       assert.equal(state.planets[0].resources[key], 100_000);
+      assert.equal(state.planets[0].buildings[`${key}Storage`], 3);
     }
+    assert.equal(state.planets[0].usedFields, 12);
     assert.equal(state.buildBoostUntil - state.buildBoostFrom, 2 * 60 * 60_000);
     assert.ok(state.buildBoostFrom >= state.createdAt);
   }
