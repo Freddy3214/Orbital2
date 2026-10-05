@@ -24,6 +24,7 @@ const GALAXY_SPAN = 220;
 const FRONTIER_SITE_COUNT = 420;
 const RESOURCE_KEYS = ["metal", "crystal", "tritium"];
 const STARTER_RESOURCES = 100_000;
+const STARTER_STORAGE_LEVEL = 3;
 const STARTER_BOOST_MS = 2 * 60 * 60_000;
 const MAX_PLANETS = 8;
 const TEST_ACCOUNT_USERNAME = process.env.TEST_ACCOUNT_USERNAME || "Lord Fredo";
@@ -42,7 +43,10 @@ const mimeTypes = {
 
 const freshBuildings = (homeworld = false) => ({
   commandCenter: 1, metalMine: homeworld ? 1 : 0, crystalMine: 0, tritiumSynthesizer: 0, solarPlant: homeworld ? 1 : 0,
-  roboticsFactory: 0, researchLab: 0, shipyard: 0, metalStorage: 0, crystalStorage: 0, tritiumStorage: 0,
+  roboticsFactory: 0, researchLab: 0, shipyard: 0,
+  metalStorage: homeworld ? STARTER_STORAGE_LEVEL : 0,
+  crystalStorage: homeworld ? STARTER_STORAGE_LEVEL : 0,
+  tritiumStorage: homeworld ? STARTER_STORAGE_LEVEL : 0,
 });
 const randomWorldName = (seedValue) => {
   const names = ["Aurelia", "Nerys", "Kallisto", "Ithara", "Myris", "Solis", "Caelia", "Orison", "Tethys", "Novara", "Elyra", "Dravos"];
@@ -63,7 +67,7 @@ const defaultState = (commander, position) => {
   activePlanetId: "vesta-prime",
   planets: [{
     id: "vesta-prime", name: worldName, type: "temperate", classification: "Gemäßigte Welt", fields: 228,
-    usedFields: 3, coordinates: `X ${position.x.toFixed(1)} · Y ${position.y.toFixed(1)}`, position, colonizedAt: now, homeworld: true,
+    usedFields: Object.values(buildings).reduce((sum, level) => sum + level, 0), coordinates: `X ${position.x.toFixed(1)} · Y ${position.y.toFixed(1)}`, position, colonizedAt: now, homeworld: true,
     buildings, resources, productionLoad: { metal: 100, crystal: 100, tritium: 100 }, buildingQueue: [], shipQueue: null, defenses: {},
   }],
   queues: { building: [], research: null, ship: null }, missions: [], pvpFlights: [], incomingFlights: [], spyReports: [], combatReports: [], messages: [], notifications: [],
