@@ -117,3 +117,4 @@ export async function initLanguage(){
   scheduled=true;queueMicrotask(()=>{scheduled=false;translateDOM();});
  }).observe(document.body,{subtree:true,childList:true,characterData:true});
 }
+
