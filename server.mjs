@@ -64,7 +64,7 @@ const defaultState = (commander, position) => {
   planets: [{
     id: "vesta-prime", name: worldName, type: "temperate", classification: "Gemäßigte Welt", fields: 228,
     usedFields: 3, coordinates: `X ${position.x.toFixed(1)} · Y ${position.y.toFixed(1)}`, position, colonizedAt: now, homeworld: true,
-    buildings, resources, buildingQueue: [], shipQueue: null, defenses: {},
+    buildings, resources, productionLoad: { metal: 100, crystal: 100, tritium: 100 }, buildingQueue: [], shipQueue: null, defenses: {},
   }],
   queues: { building: [], research: null, ship: null }, missions: [], pvpFlights: [], incomingFlights: [], spyReports: [], combatReports: [], messages: [], notifications: [],
   log: [{ at: now, type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
@@ -367,7 +367,7 @@ async function colonizeSite(key, targetId) {
     if (account.state.planets.length >= MAX_PLANETS) fail(`Maximal ${MAX_PLANETS} Welten möglich.`, 400);
     const types = [["temperate","Gemäßigte Welt"],["arid","Wüstenwelt"],["ocean","Ozeanwelt"],["ice","Eiswelt"],["volcanic","Vulkanwelt"]];
     const [type, classification] = types[randomBytes(1)[0] % types.length];
-    const planet = { id: site.id, name: randomWorldName(`${account.id}:${site.id}`), type, classification, fields: 96 + randomBytes(4).readUInt32BE() % 295, usedFields: 1, coordinates: `X ${site.position.x.toFixed(1)} · Y ${site.position.y.toFixed(1)}`, colonizedAt: Date.now(), homeworld: false };
+    const planet = { id: site.id, name: randomWorldName(`${account.id}:${site.id}`), type, classification, fields: 96 + randomBytes(4).readUInt32BE() % 295, usedFields: 1, coordinates: `X ${site.position.x.toFixed(1)} · Y ${site.position.y.toFixed(1)}`, colonizedAt: Date.now(), homeworld: false, productionLoad: { metal: 100, crystal: 100, tritium: 100 } };
     planet.position = { ...site.position };
     planet.defenses = {};
     planet.buildings = freshBuildings(false);
@@ -863,6 +863,10 @@ function saveableState(rawState, username) {
     return {
       ...planet,
       name: cleanPlanetName(planet.name) || randomWorldName(`${username}:${planet.id || index}`),
+      productionLoad: Object.fromEntries(RESOURCE_KEYS.map((key) => {
+        const value = Number(planet.productionLoad?.[key]);
+        return [key, Number.isFinite(value) ? Math.max(0, Math.min(100, Math.floor(value / 10) * 10)) : 100];
+      })),
       buildings,
       buildingQueue: Array.isArray(planet.buildingQueue) ? planet.buildingQueue : [],
       shipQueue: planet.shipQueue || null,
@@ -914,7 +918,7 @@ async function serveStatic(pathname, request, response) {
     const etag = `W/"${info.size}-${Math.floor(info.mtimeMs)}"`;
     const baseHeaders = {
       "Cache-Control": requested === "index.html" ? "no-cache" : "public, max-age=3600, stale-while-revalidate=86400",
-      "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+      "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src https://www.youtube.com; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
       "Cross-Origin-Resource-Policy": "same-origin",
       "ETag": etag,
       "Referrer-Policy": "no-referrer",
