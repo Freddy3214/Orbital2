@@ -23,6 +23,8 @@ const LEVEL_CAP = 100;
 const GALAXY_SPAN = 220;
 const FRONTIER_SITE_COUNT = 420;
 const RESOURCE_KEYS = ["metal", "crystal", "tritium"];
+const STARTER_RESOURCES = 100_000;
+const STARTER_BOOST_MS = 2 * 60 * 60_000;
 const MAX_PLANETS = 8;
 const TEST_ACCOUNT_USERNAME = process.env.TEST_ACCOUNT_USERNAME || "Lord Fredo";
 let mutationChain = Promise.resolve();
@@ -47,22 +49,25 @@ const randomWorldName = (seedValue) => {
   return names[stableHash(seedValue) % names.length];
 };
 const defaultState = (commander, position) => {
+  const now = Date.now();
   const buildings = freshBuildings(true);
-  const worldName = randomWorldName(`${commander}:${Date.now()}`);
+  const resources = { metal: STARTER_RESOURCES, crystal: STARTER_RESOURCES, tritium: STARTER_RESOURCES, lastUpdate: now };
+  const worldName = randomWorldName(`${commander}:${now}`);
   return ({
-  version: 4, commander, createdAt: Date.now(),
-  resources: { metal: 20000, crystal: 10000, tritium: 5000, lastUpdate: Date.now() },
+  version: 4, commander, createdAt: now,
+  resources,
+  buildBoostFrom: now, buildBoostUntil: now + STARTER_BOOST_MS,
   buildings: { ...buildings },
   research: { energyTech: 0, combustionDrive: 0, plasmaTheory: 0, avionics: 0, deepSpaceSensors: 0, constructionEngineering: 0, computerTech: 0, storageTech: 0 },
   ships: { cargoDrone: 0, interceptor: 0, colonyShip: 0, spyProbe: 0 },
   activePlanetId: "vesta-prime",
   planets: [{
     id: "vesta-prime", name: worldName, type: "temperate", classification: "Gemäßigte Welt", fields: 228,
-    usedFields: 3, coordinates: `X ${position.x.toFixed(1)} · Y ${position.y.toFixed(1)}`, position, colonizedAt: Date.now(), homeworld: true,
-    buildings, buildingQueue: [], shipQueue: null, defenses: {},
+    usedFields: 3, coordinates: `X ${position.x.toFixed(1)} · Y ${position.y.toFixed(1)}`, position, colonizedAt: now, homeworld: true,
+    buildings, resources, buildingQueue: [], shipQueue: null, defenses: {},
   }],
   queues: { building: [], research: null, ship: null }, missions: [], pvpFlights: [], incomingFlights: [], spyReports: [], combatReports: [], messages: [], notifications: [],
-  log: [{ at: Date.now(), type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
+  log: [{ at: now, type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
   });
 };
 
@@ -927,6 +932,8 @@ async function serveStatic(pathname, request, response) {
 
 function demoAccount(activeId = "demo-home") {
   const state = defaultState("Demo Commander", {x:45,y:65});
+  state.buildBoostFrom = 0;
+  state.buildBoostUntil = 0;
   const base = structuredClone(state.planets[0]);
   state.planets = [
     {...structuredClone(base),id:"demo-home",name:"Aster Prime",homeworld:true,position:{x:45,y:65},type:"temperate"},
