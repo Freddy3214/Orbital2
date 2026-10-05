@@ -24,6 +24,15 @@ async function api(path, method = "GET", body, cookie) {
 test("PvP flights warn the defender and settle from arrival-time state", async () => {
   const a = await api("/api/auth/register", "POST", {username:"FlightAlpha",password:"secure1234"});
   const b = await api("/api/auth/register", "POST", {username:"FlightBeta",password:"secure1234"});
+  for (const signup of [a, b]) {
+    const { state } = signup.payload;
+    for (const key of ["metal", "crystal", "tritium"]) {
+      assert.equal(state.resources[key], 100_000);
+      assert.equal(state.planets[0].resources[key], 100_000);
+    }
+    assert.equal(state.buildBoostUntil - state.buildBoostFrom, 2 * 60 * 60_000);
+    assert.ok(state.buildBoostFrom >= state.createdAt);
+  }
   const aCookie = a.cookie, bCookie = b.cookie;
   const attacker = a.payload.state;
   attacker.ships.spyProbe = 5;
@@ -77,4 +86,13 @@ test("simulator applies the server's combat arithmetic", () => {
   assert.equal(outcome.won, true);
   assert.equal(outcome.losses.battleship, 1);
   assert.equal(outcome.defenseLosses.teslaCoil, 1);
+});
+
+test("planet production settings persist in ten-percent steps", async () => {
+  const signup = await api("/api/auth/register", "POST", {username:"EnergyPlanner",password:"secure1234"});
+  const state = signup.payload.state;
+  state.planets[0].productionLoad = {metal:70,crystal:35,tritium:0};
+  await api("/api/state", "PUT", {state}, signup.cookie);
+  const saved = (await api("/api/state", "GET", undefined, signup.cookie)).payload.state;
+  assert.deepEqual(saved.planets[0].productionLoad, {metal:70,crystal:30,tritium:0});
 });
