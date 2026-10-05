@@ -1728,6 +1728,7 @@ content.addEventListener("click", (event) => {
     selectedMailboxEntry = button.dataset.mailEntry;
     const entry = mailboxEntries().find(item => item.key === selectedMailboxEntry);
     if (entry) { entry.item.read = true; state.readReports = [...new Set([...state.readReports, entry.key])].slice(-240); }
+    if (mailboxFilter === "unread") mailboxFilter = "all";
     render(); save({ quiet:true }); return;
   }
   if (button.dataset.testBoost) { grantBuildBoost(button.dataset.testBoost); return; }
