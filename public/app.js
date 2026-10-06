@@ -779,7 +779,7 @@ async function raidTarget(targetId) {
   const fleet = Object.fromEntries(Object.keys(FLEET).map(key=>[key,Math.min(state.ships[key]||0,Math.max(0,Math.floor(Number(raidSelection[key])||0)))]));
   if (!Object.values(fleet).some(Boolean)) {
     actionBusy = false;
-    toast("Wähle zuerst deine Einsatzflotte im Zielfenster.", true);
+    toast("Wähle zuerst mindestens ein Schiff für den Angriff.", true);
     return;
   }
   try {
@@ -793,13 +793,13 @@ async function raidTarget(targetId) {
     if (!response.ok) throw new Error(payload.error || "Raubzug konnte nicht ausgeführt werden.");
     state = payload.state;
     ensureStateShape();
+    raidSelection = {};
     toast(`Angriffsflotte gestartet · Ankunft in ${formatDuration(payload.flight.arrivesAt - Date.now())}.`);
-    render();
     fetchGalaxy({ force: true });
     fetchLeaderboard();
   } catch (error) {
     toast(error.message || "Der Raubzug konnte nicht ausgeführt werden.", true);
-  } finally { actionBusy = false; }
+  } finally { actionBusy = false; render(); }
 }
 
 async function spyTarget(targetId, probes) {
@@ -850,7 +850,6 @@ function openGame(payload) {
   $("#commander-name").textContent = state.commander;
   restoreTheme();
   $("#commander-gate").classList.add("hidden");
-  $("#gate-music-player").src = "about:blank";
   $("#app").classList.remove("is-hidden");
   render();
   fetchLeaderboard();
@@ -891,7 +890,6 @@ async function logout() {
   messageBody = "";
   $("#app").classList.add("is-hidden");
   $("#commander-gate").classList.remove("hidden");
-  $("#gate-music-player").src = "https://www.youtube.com/embed/8_5lauY-XzQ?autoplay=1&playsinline=1&controls=1";
   $("#password-input").value = "";
   setGateMode("login");
 }
@@ -1211,8 +1209,9 @@ function simulatorView() {
 content.addEventListener("error", (event) => {
   if (event.target.tagName === "IMG" && event.target.src.startsWith("https://")) event.target.src = "/assets/research-lab.svg";
 }, true);
-function fleetSelector() {
-  return `<details class="fleet-selector" open><summary>Einsatzflotte zusammenstellen</summary>${Object.entries(FLEET).map(([key,item])=>`<label><span>${SHIPS[key].name} <small>(${state.ships[key]||0} verfügbar)</small></span><input type="number" inputmode="numeric" min="0" max="${state.ships[key]||0}" step="1" value="${raidSelection[key]||0}" data-fleet-key="${key}" aria-label="${SHIPS[key].name} einsetzen"></label>`).join("")}<p>Nur die gewählten Schiffe starten. Angriffe und Spionage brauchen Flugzeit. Der Gegner wird vor der Ankunft gewarnt.</p></details>`;
+function fleetSelector(availableOnly = false) {
+  const ships = Object.entries(FLEET).filter(([key]) => !availableOnly || (state.ships[key] || 0) > 0);
+  return `<details class="fleet-selector" open><summary>Einsatzflotte zusammenstellen</summary>${ships.map(([key,item])=>`<label><span>${SHIPS[key].name} <small>(${state.ships[key]||0} verfügbar)</small></span><input type="number" inputmode="numeric" min="0" max="${state.ships[key]||0}" step="1" value="${raidSelection[key]||0}" data-fleet-key="${key}" aria-label="${SHIPS[key].name} einsetzen"></label>`).join("")}<p>Nur die gewählten Schiffe starten. Angriffe und Spionage brauchen Flugzeit. Der Gegner wird vor der Ankunft gewarnt.</p></details>`;
 }
 function fitGalaxyEmpire() {
   const origins = galaxySensorOrigins.length ? galaxySensorOrigins : [{ position: galaxyOrigin, radius: galaxyRadius }];
@@ -1314,7 +1313,8 @@ function mailboxMessageMarkup(message) {
 function spyArchiveMarkup(report) {
   if (report.side === "defender") return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGEALARM</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)} wurde ausgespäht</h3><p>${escapeHtml(report.attackerName || "Angreifer unbekannt")} · ${formatNumber(report.probes)} Sonde${report.probes === 1 ? "" : "n"} erkannt · ${formatNumber(report.intercepted)} abgefangen.</p><p>Prüfe deine Lager und laufenden Anflüge im Dashboard.</p></article>`;
   const stillValid = report.expiresAt > Date.now();
-  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small>${stillValid && report.targetId ? `<div class="report-actions"><button class="primary-button" data-open-spy-target="${escapeHtml(report.targetId)}">Flotte zum Angriff auswählen →</button><small>Öffnet das Ziel in der Sternenkarte. Der Angriff startet erst nach deiner Bestätigung.</small></div>` : ""}</article>`;
+  const hasFleet = Object.keys(FLEET).some(key => (state.ships[key] || 0) > 0);
+  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p><small class="${stillValid ? "positive" : ""}">${stillValid ? `Noch ${formatDuration(report.expiresAt - Date.now())} für Angriffe gültig` : "Archivbericht · Angriff nicht mehr freigeschaltet"}</small>${stillValid && report.targetId ? `<section class="report-attack" aria-label="Angriff auf ${escapeHtml(report.signature)} planen"><h4>Direkt aus diesem Bericht angreifen</h4>${hasFleet ? `${fleetSelector(true)}<div class="report-actions"><button class="primary-button" data-raid-target="${escapeHtml(report.targetId)}" ${actionBusy ? "disabled" : ""}>Angriff starten →</button><button class="secondary-button" data-open-spy-target="${escapeHtml(report.targetId)}">Ziel in Sternenkarte zeigen</button></div><small>Wähle mindestens ein Schiff. Erst „Angriff starten“ schickt die Flotte los; der Gegner wird vor der Ankunft gewarnt.</small>` : `<p>Keine einsatzfähige Flotte verfügbar. Baue zuerst Transport- oder Kampfschiffe.</p><button class="secondary-button" data-view-jump="shipyard">Zur Orbitalwerft →</button>`}</section>` : ""}</article>`;
 }
 function combatArchiveMarkup(report) {
   const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") || "keine Beute";
@@ -1741,6 +1741,7 @@ content.addEventListener("click", (event) => {
   if (button.dataset.transferBack !== undefined) { transferStep = Math.max(1,transferStep-1); render(); return; }
   if (button.dataset.transferNext !== undefined) { const problem=transferProblem(transferStep); if(problem) return toast(problem,true); transferStep=Math.min(4,transferStep+1); render(); return; }
   if (button.dataset.mailEntry) {
+    if (selectedMailboxEntry !== button.dataset.mailEntry) raidSelection = {};
     selectedMailboxEntry = button.dataset.mailEntry;
     const entry = mailboxEntries().find(item => item.key === selectedMailboxEntry);
     if (entry) { entry.item.read = true; state.readReports = [...new Set([...state.readReports, entry.key])].slice(-240); }
@@ -1863,9 +1864,6 @@ $("#theme-switch").addEventListener("change", event => {
 });
 
 setGateMode("register");
-$("#gate-music-retry").addEventListener("click", () => {
-  $("#gate-music-player").src = "https://www.youtube.com/embed/8_5lauY-XzQ?autoplay=1&playsinline=1&controls=1";
-});
 document.addEventListener("orbital-language-change", () => { if (state) render(); });
 initLanguage();
 restoreSession();
