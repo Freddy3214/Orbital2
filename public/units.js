@@ -1,4 +1,8 @@
 // Shared by browser and server: one source for unit balance.
+export const WORLD_SPEED = 10;
+// A fixed transition avoids granting tenfold resources for time before deployment.
+export const SPEED_START_AT = Date.parse("2026-10-06T08:00:00Z");
+export function worldSpeedAt(at = Date.now()) { return at >= SPEED_START_AT ? WORLD_SPEED : 1; }
 export const FLEET = {
   cargoDrone: { power:4, cargo:850 }, interceptor:{power:45,cargo:120},
   smallTransport:{name:"Kleiner Transporter",power:8,cargo:2500,level:2,minimumBuildTimeMs:120000,cost:{metal:450,crystal:220,tritium:60}},
@@ -15,3 +19,4 @@ export const DEFENSE = {
   missileDefense:{name:"Raketenabwehr",power:220,antiSpy:.015,level:3,cost:{metal:900,crystal:800,tritium:180},description:"Abfangstellung gegen angreifende Schiffe und Sonden; wird zur Abwehrstärke gerechnet."},
   sensorJammer:{name:"Sondenstörsender",power:25,antiSpy:.07,level:4,cost:{metal:600,crystal:1600,tritium:400},description:"Erhöht das Abfangrisiko für Spionagesonden und erschwert die Aufklärung."}
 };
+
