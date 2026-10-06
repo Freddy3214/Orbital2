@@ -32,6 +32,11 @@ body { background:#27251f; }.starfield { background:radial-gradient(ellipse at t
 .mail-row:focus-visible {outline:2px solid #91e6f7;outline-offset:-3px}
 .mailbox-reading {min-height:360px;overflow-wrap:anywhere}
 .mailbox-reading .mail-card {border:0;background:transparent}.mailbox-reading .mail-card p {white-space:pre-wrap;line-height:1.65}
+.report-attack {margin-top:18px;padding:15px;border:1px solid #caa76c88;border-radius:10px;background:#5e4b3047}
+.report-attack h4 {margin:0 0 10px;color:#ffdfaa}
+.report-attack .fleet-selector {max-height:260px;overflow:auto}
+.report-attack .report-actions {display:flex;gap:9px;flex-wrap:wrap;margin:13px 0 9px}
+.report-attack > small {display:block;color:#d5c7a8;line-height:1.5}
 .compose-panel {margin-top:18px}.compose-panel summary {padding:17px;cursor:pointer;font-weight:700}
 .transfer-console {margin:18px 0}.transfer-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .transfer-grid label {display:block;font-size:12px}.transfer-grid input,.transfer-grid select {display:block;width:100%;padding:10px;margin-top:7px;background:#27251f;color:#fff0cf;border:1px solid #af966a;border-radius:5px}
