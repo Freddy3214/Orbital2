@@ -555,10 +555,12 @@ function prepareRaid(attacker, defender, rawFleet) {
   const fleet = Object.fromEntries(Object.keys(FLEET).map(key=>[key,asWholeNumber(rawFleet?.[key])]));
   const attackerAvionics = asWholeNumber(attacker.state.research?.avionics);
   const defenderAvionics = asWholeNumber(defender.state.research?.avionics);
-  const defenderShips = defender.state.ships || {};
+  const defenderShips = Object.fromEntries(Object.keys(FLEET).map(key=>[key,asWholeNumber(defender.state.ships?.[key])]));
   const defenderBuildings = primaryPlanet(defender).buildings || defender.state.buildings || {};
   const planetDefenses = primaryPlanet(defender).defenses || {};
-  const { attackPower, defensePower, won, capacity, losses, defenseLosses, survivors } = simulateBattle({ attackerFleet:fleet, defenderFleet:defenderShips, defenses:planetDefenses, attackerAvionics, defenderAvionics, commandCenter:defenderBuildings.commandCenter, shipyard:defenderBuildings.shipyard });
+  const defendingDefenses = Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(planetDefenses[key])]));
+  const combatBonuses = { attackerAvionics, defenderAvionics, commandCenter:asWholeNumber(defenderBuildings.commandCenter), shipyard:asWholeNumber(defenderBuildings.shipyard) };
+  const { attackPower, defensePower, won, capacity, losses, defenseLosses, survivors } = simulateBattle({ attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, ...combatBonuses });
   const loot = { metal: 0, crystal: 0, tritium: 0 };
   if (won) {
     let remainingCapacity = capacity;
@@ -591,8 +593,9 @@ function prepareRaid(attacker, defender, rawFleet) {
     : `${attacker.username} wurde abgefangen. Deine Verteidigung hielt stand.`, "high");
   const resolvedAt = Date.now();
   const combatId = `${attacker.id}-${defender.id}-${resolvedAt}-${randomBytes(3).toString("hex")}`;
-  addCombatReport(attacker.state, { id: combatId, at: resolvedAt, side: "attacker", opponent: defender.username, won, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText });
-  addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, attackPower, defensePower, losses: {}, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText });
+  const composition = { attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, combatBonuses };
+  addCombatReport(attacker.state, { id: combatId, at: resolvedAt, side: "attacker", opponent: defender.username, won, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, ...composition });
+  addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, ...composition });
   return { won, fleet, survivors, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, resolvedAt };
 }
 export function flightDuration(attacker, defender, spy, at = Date.now()) {
@@ -608,7 +611,7 @@ function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy) {
   if (!targetPlanet) fail("Dieses Ziel ist nicht verfügbar.", 404);
   const origin = activeGalaxyAccount(attacker);
   const target = { ...defender, focusPlanet: targetPlanet };
-  const report = spy ? null : knownSpyReport(attacker.state, signalId(target));
+  const report = knownSpyReport(attacker.state, signalId(target));
   if (!targetIsVisible(origin, target) && !report) fail("Dieses Ziel ist nicht verfügbar.", 404);
   if ((attacker.state.pvpFlights || []).length >= 20) fail("Maximal 20 PvP-Flüge gleichzeitig.", 409);
   let fleet;
