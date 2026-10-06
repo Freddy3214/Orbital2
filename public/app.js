@@ -243,6 +243,7 @@ let galaxySpan = 220;
 let galaxyZoom = 1;
 let raidSelection = {};
 let simulationDraft = null;
+let simulationSource = null;
 let transferSelection = {};
 let selectedMailboxEntry = null;
 let mailboxFilter = "all";
@@ -1210,12 +1211,37 @@ function simulatorView() {
   };
   const inputRows = (catalog, values, side) => Object.entries(catalog).map(([key,item]) => `<label><span>${escapeHtml(SHIPS[key]?.name || item.name || key)}</span><input type="number" min="0" max="1000000" step="1" value="${Math.max(0,Number(values[key])||0)}" data-sim-side="${side}" data-sim-key="${key}"></label>`).join("");
   const result = simulationDraft ? simulateBattle(draft) : null;
+  const unknown = simulationSource?.unknown || [];
   const lossText = values => Object.entries(values).filter(([,amount])=>amount).map(([key,amount])=>`${formatNumber(amount)} × ${SHIPS[key]?.name || key}`).join(" · ") || "keine";
   return `<section class="view-heading"><div><span class="eyebrow">TAKTIKZENTRUM</span><h1>Kampfsimulator</h1><p>Trage hypothetische Flotten und planetare Abwehr ein. Der Simulator nutzt dieselbe Formel wie echte Angriffe; der tatsächliche Gegnerbestand kann sich bis zur Ankunft ändern.</p></div></section>
+  ${simulationSource ? `<section class="panel panel-inner sim-intel-source"><span class="eyebrow">AUS SPIONAGEBERICHT</span><h2>${escapeHtml(simulationSource.signature)}</h2><p>Erfasst am ${formatDateTime(simulationSource.createdAt)}. Bekannte Verteidigerdaten sind bereits eingetragen; ändere die Angriffsflotte nach Bedarf.</p>${unknown.length ? `<p class="warning">Nicht aufgedeckt: ${escapeHtml(unknown.join(", "))}. Fehlende Werte stehen vorläufig auf 0 – ein scheinbarer Sieg kann deshalb täuschen.</p>` : ""}<button class="secondary-button" data-view-jump="messages">Zurück zum Bericht →</button></section>` : ""}
   <div class="sim-grid"><section class="panel panel-inner"><h2>Angreifende Flotte</h2><div class="sim-inputs">${inputRows(FLEET,draft.attackerFleet,"attackerFleet")}</div><label>Avionik des Angreifers<input type="number" min="0" max="100" value="${draft.attackerAvionics}" data-sim-key="attackerAvionics"></label></section>
   <section class="panel panel-inner"><h2>Verteidigung</h2><h3>Schiffe im Orbit</h3><div class="sim-inputs">${inputRows(FLEET,draft.defenderFleet,"defenderFleet")}</div><h3>Planetare Abwehr</h3><div class="sim-inputs">${inputRows(DEFENSE,draft.defenses,"defenses")}</div><div class="sim-inputs">${[["defenderAvionics","Avionik"],["commandCenter","Kommandozentrale"],["shipyard","Orbitalwerft"]].map(([key,label])=>`<label><span>${label}</span><input type="number" min="0" max="100" value="${draft[key]}" data-sim-key="${key}"></label>`).join("")}</div></section></div>
   <div class="sim-actions"><button class="primary-button" data-simulate>Schlacht berechnen</button><button class="secondary-button" data-sim-reset>Zurücksetzen</button></div>
-  ${result ? `<section class="panel panel-inner sim-result ${result.won ? "sim-win" : "sim-loss"}"><span class="eyebrow">SIMULATION · KEIN ECHTER KAMPF</span><h2>${result.won ? "Angreifer gewinnt" : "Verteidiger hält stand"}</h2><p>Angriff <strong>${formatNumber(result.attackPower)}</strong> · Abwehr <strong>${formatNumber(result.defensePower)}</strong> · Frachtraum <strong>${formatNumber(result.capacity)}</strong></p><p>Angreifer-Verluste: ${escapeHtml(lossText(result.losses))}</p><p>Verlorene Abwehr: ${escapeHtml(lossText(result.defenseLosses))}</p><small>Beute hängt vom Rohstoffbestand bei Ankunft ab und wird hier nicht vorhergesagt.</small></section>` : ""}`;
+  ${result ? `<section class="panel panel-inner sim-result ${result.won ? "sim-win" : "sim-loss"}"><span class="eyebrow">SIMULATION · KEIN ECHTER KAMPF</span><h2>${result.won ? "Angreifer gewinnt im Modell" : "Verteidiger hält stand"}</h2><p>Angriff <strong>${formatNumber(result.attackPower)}</strong> · Abwehr <strong>${formatNumber(result.defensePower)}</strong> · Frachtraum <strong>${formatNumber(result.capacity)}</strong></p><p>Angreifer-Verluste: ${escapeHtml(lossText(result.losses))}</p><p>Verlorene Abwehr: ${escapeHtml(lossText(result.defenseLosses))}</p>${unknown.length ? `<p class="warning">Unbekannte Verteidigerwerte sind mit 0 berechnet. Das Ergebnis ist keine sichere Prognose.</p>` : ""}<small>Beute hängt vom Rohstoffbestand bei Ankunft ab und wird hier nicht vorhergesagt.</small></section>` : ""}`;
+}
+function simulateSpyReport(reportId) {
+  const report = state.spyReports.find(item => String(item.id || item.createdAt) === reportId && item.side !== "defender");
+  if (!report) return toast("Spionagebericht nicht gefunden.", true);
+  const unknown = [];
+  if (!report.ships) unknown.push("Verteidigerflotte");
+  if (!report.defenses) unknown.push("planetare Abwehr");
+  if (!report.research || report.research.avionics === undefined) unknown.push("Verteidiger-Avionik");
+  if (!report.buildings || report.buildings.commandCenter === undefined) unknown.push("Kommandozentrale");
+  if (!report.buildings || report.buildings.shipyard === undefined) unknown.push("Orbitalwerft");
+  simulationSource = { signature:report.signature, createdAt:report.createdAt, unknown };
+  simulationDraft = {
+    attackerFleet:Object.fromEntries(Object.keys(FLEET).map(key=>[key,state.ships[key] || 0])),
+    defenderFleet:Object.fromEntries(Object.keys(FLEET).map(key=>[key,report.ships?.[key] || 0])),
+    defenses:Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,report.defenses?.[key] || 0])),
+    attackerAvionics:state.research.avionics || 0,
+    defenderAvionics:report.research?.avionics || 0,
+    commandCenter:report.buildings?.commandCenter || 0,
+    shipyard:report.buildings?.shipyard || 0,
+  };
+  activeView = "simulator";
+  render();
+  window.scrollTo({ top:0, behavior:"smooth" });
 }
 content.addEventListener("error", (event) => {
   if (event.target.tagName === "IMG" && event.target.src.startsWith("https://")) event.target.src = "/assets/research-lab.svg";
@@ -1324,11 +1350,23 @@ function mailboxMessageMarkup(message) {
 function spyArchiveMarkup(report) {
   if (report.side === "defender") return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGEALARM</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)} wurde ausgespäht</h3><p>${escapeHtml(report.attackerName || "Angreifer unbekannt")} · ${formatNumber(report.probes)} Sonde${report.probes === 1 ? "" : "n"} erkannt · ${formatNumber(report.intercepted)} abgefangen.</p><p>Prüfe deine Lager und laufenden Anflüge im Dashboard.</p></article>`;
   const hasFleet = Object.keys(FLEET).some(key => (state.ships[key] || 0) > 0);
-  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p>${report.targetId ? `<section class="report-attack" aria-label="Angriff auf ${escapeHtml(report.signature)} planen"><h4>Direkt aus diesem Bericht angreifen</h4>${hasFleet ? `${fleetSelector(true)}<div class="report-actions"><button class="primary-button" data-raid-target="${escapeHtml(report.targetId)}" ${actionBusy ? "disabled" : ""}>Angriff starten →</button><button class="secondary-button" data-open-spy-target="${escapeHtml(report.targetId)}">Ziel in Sternenkarte zeigen</button></div><small>Wähle mindestens ein Schiff. Erst „Angriff starten“ schickt die Flotte los; der Gegner wird vor der Ankunft gewarnt.</small>` : `<p>Keine einsatzfähige Flotte verfügbar. Baue zuerst Transport- oder Kampfschiffe.</p><button class="secondary-button" data-view-jump="shipyard">Zur Orbitalwerft →</button>`}</section>` : ""}</article>`;
+  const probes = Math.max(0, Number(state.ships.spyProbe) || 0);
+  const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
+  const actions = report.targetId ? `<section class="report-attack" aria-label="Einsatz auf ${escapeHtml(report.signature)} planen"><h4>Vom Bericht zum Einsatz</h4>${hasFleet ? fleetSelector(true) : '<p>Keine einsatzfähige Angriffsflotte vorhanden. Baue zuerst Transport- oder Kampfschiffe.</p>'}<div class="report-actions">${hasFleet ? `<button class="primary-button" data-raid-target="${escapeHtml(report.targetId)}" ${actionBusy ? "disabled" : ""}>Angriff starten →</button>` : '<button class="secondary-button" data-view-jump="shipyard">Zur Orbitalwerft →</button>'}<button class="secondary-button" data-sim-report="${escapeHtml(String(report.id || report.createdAt))}">Kampf simulieren →</button><button class="secondary-button" data-open-spy-target="${escapeHtml(report.targetId)}">Ziel in Sternenkarte zeigen</button></div><small>Wähle für den Angriff eine Flotte. Im Simulator kannst du die benötigte Stärke vorab berechnen.</small><div class="report-rescan">${probes ? `<label for="report-rescan-probes">Aufklärsonden<input id="report-rescan-probes" type="number" inputmode="numeric" min="1" max="${Math.min(12,probes)}" value="${Math.min(5,probes)}"></label><button class="secondary-button" data-rescan-target="${escapeHtml(report.targetId)}" ${cooldown || actionBusy ? "disabled" : ""}>${cooldown ? `Sondenkanal · ${cooldown}s` : "Erneut erkunden →"}</button>` : '<p>Keine Aufklärsonden verfügbar.</p><button class="secondary-button" data-view-jump="shipyard">Sonden bauen →</button>'}<small>Ein neuer Bericht erscheint nach Ankunft der Sonden im Postfach.</small></div></section>` : "";
+  return `<article class="mail-card intel-archive"><div class="mail-card-head"><span class="badge">SPIONAGE · ${report.intelligence}/5</span><time>${formatDateTime(report.createdAt)}</time></div><h3>${escapeHtml(report.signature)}</h3><p>${escapeHtml(report.owner || "Besitzer unbekannt")} · ${report.world ? `${report.world.fields} Baufelder` : "Weltparameter verschlüsselt"}</p><p>${report.resources ? Object.entries(report.resources).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") : "Rohstoffscan fehlgeschlagen"}</p>${actions}</article>`;
+}
+function combatRosterMarkup(title, units, catalog, losses = null) {
+  const rows = Object.entries(catalog).filter(([key]) => Number(units?.[key]) > 0);
+  return `<section class="combat-roster"><h4>${escapeHtml(title)}</h4>${rows.length ? rows.map(([key, unit]) => {
+    const lost = Math.max(0, Number(losses?.[key]) || 0);
+    return `<div class="combat-roster-row"><span>${escapeHtml(SHIPS[key]?.name || unit.name || key)}</span><strong>${formatNumber(units[key])}×</strong>${lost ? `<small>−${formatNumber(lost)} verloren</small>` : ""}</div>`;
+  }).join("") : '<p>Keine Einheiten eingesetzt.</p>'}</section>`;
 }
 function combatArchiveMarkup(report) {
-  const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") || "keine Beute";
-  return `<article class="mail-card combat-archive"><div class="mail-card-head"><span class="badge">KAMPF · ${report.won ? "SIEG" : "VERLUST"}</span><time>${formatDateTime(report.at)}</time></div><h3>${escapeHtml(report.side === "attacker" ? "Raubzug gegen" : "Angriff von")} ${escapeHtml(report.opponent)}</h3><p>Angriff ${formatNumber(report.attackPower)} · Abwehr ${formatNumber(report.defensePower)}</p><p>Beute: ${loot}</p><small>Eigene Verluste: ${escapeHtml(report.attackerLosses || "keine")}</small></article>`;
+  const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") || "keine";
+  const complete = report.attackerFleet && report.defenderFleet && report.defenses;
+  const bonuses = report.combatBonuses;
+  return `<article class="mail-card combat-archive"><div class="mail-card-head"><span class="badge">KAMPF · ${report.won ? "SIEG" : "VERLUST"}</span><time>${formatDateTime(report.at)}</time></div><h3>${escapeHtml(report.side === "attacker" ? "Raubzug gegen" : "Angriff von")} ${escapeHtml(report.opponent)}</h3><div class="combat-power"><span>Angriff <strong>${formatNumber(report.attackPower)}</strong></span><span>Abwehr <strong>${formatNumber(report.defensePower)}</strong></span></div>${complete ? `<div class="combat-rosters">${combatRosterMarkup("Angreifende Flotte", report.attackerFleet, FLEET, report.losses)}${combatRosterMarkup("Verteidigende Flotte", report.defenderFleet, FLEET)}${combatRosterMarkup("Planetare Abwehr", report.defenses, DEFENSE, report.defenseLosses)}</div>${bonuses ? `<div class="combat-bonuses"><h4>Technik & Anlagen</h4><span>Angreifer-Avionik ${formatNumber(bonuses.attackerAvionics || 0)}</span><span>Verteidiger-Avionik ${formatNumber(bonuses.defenderAvionics || 0)}</span><span>Kommandozentrale ${formatNumber(bonuses.commandCenter || 0)}</span><span>Orbitalwerft ${formatNumber(bonuses.shipyard || 0)}</span></div>` : ""}` : '<p class="combat-legacy">Bei diesem älteren Kampf wurde die genaue Aufstellung noch nicht gespeichert.</p>'}<p>${report.side === "defender" ? "Entwendete Rohstoffe" : "Beute"}: ${loot}</p><p>Angreiferverluste: ${escapeHtml(report.attackerLosses || "keine")}</p><p>Verlorene Abwehr: ${escapeHtml(report.defenseLossSummary || "keine")}</p></article>`;
 }
 function mailboxEntries() {
   return [
@@ -1649,6 +1687,12 @@ content.addEventListener("input", event => {
     if (loaded) loaded.textContent = formatNumber(transferPlan().total);
   }
   if (event.target.id === "mailbox-search") mailboxSearchDraft = event.target.value;
+  if (event.target.id === "report-rescan-probes") {
+    const probes = Number(event.target.value);
+    const cooldown = Date.now() - (state.lastSpyAt || 0) < 15000;
+    const button = $("[data-rescan-target]", content);
+    if (button) button.disabled = !Number.isInteger(probes) || probes < 1 || probes > 12 || probes > (state.ships.spyProbe || 0) || cooldown || actionBusy;
+  }
   if (event.target.dataset.mailSelect) {
     if (event.target.checked) mailboxSelection.add(event.target.dataset.mailSelect);
     else mailboxSelection.delete(event.target.dataset.mailSelect);
@@ -1709,7 +1753,7 @@ content.addEventListener("wheel", event => {
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
-  if (IS_DEMO && !["signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter","simulate","simReset"].some(key=>button.dataset[key]!==undefined)) {
+  if (IS_DEMO && !["signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter","simulate","simReset","simReport"].some(key=>button.dataset[key]!==undefined)) {
     toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return;
   }
   if (button.dataset.playerSearch !== undefined) {
@@ -1718,7 +1762,8 @@ content.addEventListener("click", (event) => {
     searchPlayers(query);
     return;
   }
-  if (button.dataset.simReset !== undefined) { simulationDraft = null; render(); return; }
+  if (button.dataset.simReset !== undefined) { simulationDraft = null; simulationSource = null; render(); return; }
+  if (button.dataset.simReport !== undefined) { simulateSpyReport(button.dataset.simReport); return; }
   if (button.dataset.simulate !== undefined) {
     const draft = { attackerFleet:{}, defenderFleet:{}, defenses:{} };
     content.querySelectorAll("[data-sim-key]").forEach(input => {
@@ -1747,6 +1792,13 @@ content.addEventListener("click", (event) => {
     return;
   }
   if (button.dataset.openSpyTarget) { openSpyTarget(button.dataset.openSpyTarget); return; }
+  if (button.dataset.rescanTarget) {
+    const probes = Number($("#report-rescan-probes")?.value);
+    if (!Number.isInteger(probes) || probes < 1 || probes > 12) return toast("Wähle 1 bis 12 Aufklärsonden.", true);
+    if (probes > (state.ships.spyProbe || 0)) return toast("Nicht genügend Aufklärsonden verfügbar.", true);
+    spyTarget(button.dataset.rescanTarget, probes);
+    return;
+  }
   if (button.dataset.openGalaxy !== undefined) { activeView = "galaxy"; render(); fetchGalaxy({force:true}); return; }
   if (button.dataset.transferAll !== undefined) { transferSelection = Object.fromEntries(["cargoDrone","smallTransport","mediumTransport","largeTransport"].map(key=>[key,state.ships[key] || 0])); render(); return; }
   if (button.dataset.transferBack !== undefined) { transferStep = Math.max(1,transferStep-1); render(); return; }
@@ -1893,6 +1945,15 @@ setInterval(() => {
     });
   } else {
     resourceTicker();
+    if (activeView === "messages") {
+      const rescan = $("[data-rescan-target]", content);
+      if (rescan) {
+        const probes = Number($("#report-rescan-probes", content)?.value);
+        const cooldown = Math.max(0, Math.ceil((15000 - (Date.now() - (state.lastSpyAt || 0))) / 1000));
+        rescan.disabled = !Number.isInteger(probes) || probes < 1 || probes > 12 || probes > (state.ships.spyProbe || 0) || cooldown > 0 || actionBusy;
+        rescan.textContent = cooldown ? `Sondenkanal · ${cooldown}s` : "Erneut erkunden →";
+      }
+    }
     const liveCountdownView = ["overview", "buildings", "research", "shipyard", "defense", "fleets"].includes(activeView);
     if (!editingText && !selectingText && activeView !== "messages" && (liveCountdownView || Date.now() - lastFullRender >= 5_000)) render();
   }
