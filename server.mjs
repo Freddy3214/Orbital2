@@ -6,7 +6,7 @@ import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
-import { FLEET, DEFENSE } from "./public/units.js";
+import { FLEET, DEFENSE, worldSpeedAt } from "./public/units.js";
 import { simulateBattle } from "./public/combat.js";
 import { requestLocale } from "./locale.mjs";
 
@@ -598,10 +598,12 @@ function prepareRaid(attacker, defender, rawFleet) {
   addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, attackPower, defensePower, losses: {}, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText });
   return { won, fleet, survivors, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, resolvedAt };
 }
-function flightDuration(attacker, defender, spy) {
+export function flightDuration(attacker, defender, spy, at = Date.now()) {
   const distance = galaxyDistance(galaxyPosition(attacker), galaxyPosition(defender));
   const drive = asWholeNumber(attacker.state.research?.combustionDrive);
-  return Math.round(Math.max(spy ? 120000 : 240000, ((spy ? 180000 : 360000) + distance * 10000) / (1 + drive * .12)));
+  const speed = worldSpeedAt(at);
+  const minimum = speed === 1 ? (spy ? 120000 : 240000) : (spy ? 60000 : 180000);
+  return Math.round(Math.max(minimum, ((spy ? 180000 : 360000) + distance * 10000) / ((1 + drive * .12) * speed)));
 }
 function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy) {
   normalizeAccount(attacker); normalizeAccount(defender);
