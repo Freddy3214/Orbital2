@@ -1,4 +1,4 @@
-import { FLEET, DEFENSE } from "./units.js";
+import { FLEET, DEFENSE, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261006-speed-1";
 import { simulateBattle } from "./combat.js";
 import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js";
 const IS_DEMO = location.pathname === "/demo";
@@ -513,14 +513,14 @@ function energyStats(planet = activePlanet()) {
   const efficiency = demand === 0 ? 1 : Math.min(1, supply / demand);
   return { supply, demand, efficiency, net: supply - demand };
 }
-function production(planet = activePlanet()) {
+function production(planet = activePlanet(), at = Date.now()) {
   const b = planetBuildings(planet);
   const efficiency = energyStats(planet).efficiency;
   const plasma = 1 + state.research.plasmaTheory * .03;
   return {
-    metal: metalOutput(b.metalMine) * productionLoad(planet, "metal") / 100 * efficiency * plasma,
-    crystal: crystalOutput(b.crystalMine) * productionLoad(planet, "crystal") / 100 * efficiency * plasma,
-    tritium: tritiumOutput(b.tritiumSynthesizer) * productionLoad(planet, "tritium") / 100 * efficiency * plasma,
+    metal: metalOutput(b.metalMine) * productionLoad(planet, "metal") / 100 * efficiency * plasma * worldSpeedAt(at),
+    crystal: crystalOutput(b.crystalMine) * productionLoad(planet, "crystal") / 100 * efficiency * plasma * worldSpeedAt(at),
+    tritium: tritiumOutput(b.tritiumSynthesizer) * productionLoad(planet, "tritium") / 100 * efficiency * plasma * worldSpeedAt(at),
   };
 }
 function playerScore() {
@@ -535,18 +535,18 @@ function buildTime(cost, targetLevel = 1, planet = activePlanet(), at = Date.now
   const robotics = Math.min(100, planetBuildings(planet).roboticsFactory || 0);
   const logistics = Math.min(100, state.research.constructionEngineering || 0);
   const speed = 1 + robotics * .08 + logistics * .12;
-  return boostedDuration(Math.max(15000, (rawSeconds / speed) * 1000), at);
+  return Math.max(1000, boostedDuration(Math.max(15000, (rawSeconds / speed) * 1000) / worldSpeedAt(at), at));
 }
-function researchTime(cost, planet = activePlanet(), at = Date.now()) { return boostedDuration(Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + planetBuildings(planet).researchLab) * (1 + (state.research.computerTech || 0) * .08))) * 1000), at); }
+function researchTime(cost, planet = activePlanet(), at = Date.now()) { return Math.max(1000, boostedDuration(Math.max(5000, ((cost.metal + cost.crystal + cost.tritium) / (80 * (1 + planetBuildings(planet).researchLab) * (1 + (state.research.computerTech || 0) * .08))) * 1000) / worldSpeedAt(at), at)); }
 function shipTime(ship, planet = activePlanet(), at = Date.now()) {
   const cost = ship.cost;
   const baseTime = ((cost.metal + cost.crystal + cost.tritium) / (105 * (1 + planetBuildings(planet).shipyard))) * 1000;
-  return boostedDuration(Math.max(Number(ship.minimumBuildTimeMs) || 5000, baseTime), at);
+  return Math.max(1000, boostedDuration(Math.max(Number(ship.minimumBuildTimeMs) || 5000, baseTime) / worldSpeedAt(at), at));
 }
 
-function addProduction(hours, planet = activePlanet()) {
+function addProduction(hours, planet = activePlanet(), at = Date.now()) {
   if (hours <= 0) return;
-  const rate = production(planet), resources = planetResources(planet);
+  const rate = production(planet, at), resources = planetResources(planet);
   for (const resource of Object.keys(RESOURCE_LABELS)) {
     const current = resources[resource];
     resources[resource] = Math.max(current, Math.min(storageCap(resource, planetBuildings(planet)[`${resource}Storage`]), current + rate[resource] * hours));
@@ -683,7 +683,13 @@ function synchronize() {
     const next = due.length ? Math.min(...due) : now;
     for (const planet of state.planets) {
       const stock = planetResources(planet), last = Number(stock.lastUpdate) || cursor;
-      if (next > last) { addProduction((next-last)/3_600_000, planet); stock.lastUpdate = next; }
+      if (next > last) {
+        if (last < SPEED_START_AT && next > SPEED_START_AT) {
+          addProduction((SPEED_START_AT-last)/3_600_000, planet, last);
+          addProduction((next-SPEED_START_AT)/3_600_000, planet, SPEED_START_AT);
+        } else addProduction((next-last)/3_600_000, planet, last);
+        stock.lastUpdate = next;
+      }
     }
     resolveQueues(next);
     resolveMissions(next);
@@ -955,6 +961,7 @@ function overviewView() {
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1>${unreadCount ? `<button class="dashboard-unread" data-open-messages>✉ ${unreadCount} ungelesene ${unreadCount === 1 ? "Nachricht" : "Nachrichten"} · Postfach öffnen →</button>` : ""}<p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Flotten, Baureihen und Meldungen bleiben hier im Blick.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
     ${state.buildBoostUntil > Date.now() && state.planets.length === 1 ? starterFlightpathMarkup() : ""}
+    <div class="tip" style="margin-bottom:15px"><b>${worldSpeedAt() === WORLD_SPEED ? "Schnelle Galaxie · ×10" : "Schnelle Galaxie startet bald"}</b><span>${worldSpeedAt() === WORLD_SPEED ? "Neue Bau-, Forschungs- und Werftaufträge sowie die Rohstoffförderung laufen zehnmal schneller. PvP-Angriffe brauchen mindestens drei Minuten Anflugzeit." : `Die zehnfache Geschwindigkeit für neue Aufträge und Rohstoffförderung startet um ${new Date(SPEED_START_AT).toLocaleTimeString(locale(), {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Berlin"})} Uhr. Laufende Aufträge behalten ihre Zeiten.`}</span></div>
     <div class="grid overview-grid command-overview">
       <section class="panel hero-panel compact-planet">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
@@ -1153,8 +1160,12 @@ function transferPlan() {
   const total = Object.values(cargo).reduce((sum,n)=>sum+n,0);
   const sourcePos = activePlanet().position, targetPos = destination?.position;
   const distance = sourcePos && targetPos ? Math.hypot(sourcePos.x-targetPos.x,sourcePos.y-targetPos.y) : 5;
-  const duration = Math.max(45_000,Math.round((50_000+distance*18_000)/(1+(state.research.combustionDrive || 0)*.12)));
+  const duration = transferDuration(distance);
   return {destination,fleet,capacity,cargo,total,duration};
+}
+function transferDuration(distance) {
+  const speed = worldSpeedAt();
+  return Math.max(speed === 1 ? 45_000 : 30_000, Math.round((50_000 + distance * 18_000) / ((1 + (state.research.combustionDrive || 0) * .12) * speed)));
 }
 function transferProblem(step = 3) {
   const plan = transferPlan();
@@ -1189,7 +1200,7 @@ function techtreeView() {
   }).join("");
 }
 function helpView() {
-  return `<section class="view-heading"><h1>Hilfe & Bildnachweise</h1></section><section class="panel panel-inner"><h2>Sternenkarte</h2><p>Jeder weiße Stern ist ein auswählbares Ziel. Freie Welten lassen sich mit einem Kolonieschiff besiedeln. Besetzte Welten können ausgespäht und mit gültigem Spionagebericht angegriffen werden. Die Größe freier Welten (96–390 Felder) bleibt bis zur Besiedlung verborgen.</p><h2>Grafikstil</h2><p>Die Anlagen-, Forschungs-, Verteidigungs- und Flottengrafiken wurden als eigenständige Sci-Fi-Illustrationen für Orbital Foundry erstellt. Sie greifen die Atmosphäre klassischer Weltraum-Aufbauspiele auf, ohne Originalgrafiken anderer Spiele zu verwenden.</p><p>Die Bildatlanten werden direkt vom Spielserver geladen; externe Stockfoto-Anbieter werden dafür nicht mehr benötigt.</p></section>`;
+  return `<section class="view-heading"><h1>Hilfe & Bildnachweise</h1></section><section class="panel panel-inner"><h2>Sternenkarte</h2><p>Jeder weiße Stern ist ein auswählbares Ziel. Freie Welten lassen sich mit einem Kolonieschiff besiedeln. Besetzte Welten können ausgespäht und mit gültigem Spionagebericht angegriffen werden. Die Größe freier Welten (96–390 Felder) bleibt bis zur Besiedlung verborgen.</p><h2>Spieltempo</h2><p>Die bestehende Welt läuft ab der Umstellung mit zehnfacher Geschwindigkeit für neue Bau-, Forschungs- und Werftaufträge, Rohstoffförderung und Flüge. Angriffe benötigen weiterhin mindestens drei Minuten bis zur Ankunft; Spionage mindestens eine Minute. Bereits laufende Aufträge und Flüge behalten ihre bisherigen Zeiten.</p><h2>Grafikstil</h2><p>Die Anlagen-, Forschungs-, Verteidigungs- und Flottengrafiken wurden als eigenständige Sci-Fi-Illustrationen für Orbital Foundry erstellt. Sie greifen die Atmosphäre klassischer Weltraum-Aufbauspiele auf, ohne Originalgrafiken anderer Spiele zu verwenden.</p><p>Die Bildatlanten werden direkt vom Spielserver geladen; externe Stockfoto-Anbieter werden dafür nicht mehr benötigt.</p></section>`;
 }
 function simulatorView() {
   const draft = simulationDraft || {
@@ -1564,7 +1575,8 @@ function startMission(targetId) {
   if (!state.ships[selectedShip] || state.missions.length >= 2) return;
   state.ships[selectedShip] -= 1;
   const drive = 1 + state.research.combustionDrive * .12;
-  const duration = Math.round((target.minutes * 60_000) / drive);
+  const speed = worldSpeedAt();
+  const duration = Math.max(speed === 1 ? 0 : 30_000, Math.round((target.minutes * 60_000) / (drive * speed)));
   const departedAt = Date.now();
   state.missions.push({ id: `${targetId}-${departedAt}`, targetId, departedAt, arrivesAt: departedAt + duration, duration, phase: "outgoing", fleet: { cargoDrone: selectedShip === "cargoDrone" ? 1 : 0, interceptor: selectedShip === "interceptor" ? 1 : 0, colonyShip: selectedShip === "colonyShip" ? 1 : 0 } });
   addLog("mission", `${SHIPS[selectedShip].name} nach ${target.name} entsandt.`);
@@ -1589,7 +1601,7 @@ function startTransfer() {
   for (const [key, count] of Object.entries(fleet)) state.ships[key] -= count;
   const sourcePos = activePlanet().position, targetPos = destination.position;
   const distance = sourcePos && targetPos ? Math.hypot(sourcePos.x-targetPos.x,sourcePos.y-targetPos.y) : 5;
-  const duration = Math.max(45_000, Math.round((50_000 + distance * 18_000) / (1 + (state.research.combustionDrive || 0) * .12)));
+  const duration = transferDuration(distance);
   const departedAt = Date.now();
   state.missions.push({ id:`transport-${departedAt}`, kind:"transport", sourcePlanetId:activePlanet().id, destinationPlanetId:destination.id, departedAt, arrivesAt:departedAt + duration, duration, phase:"outgoing", fleet, cargo });
   addLog("mission", `Konvoi nach ${destination.name} gestartet.`);
