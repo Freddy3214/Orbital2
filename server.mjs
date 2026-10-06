@@ -560,18 +560,21 @@ function prepareRaid(attacker, defender, rawFleet) {
   const planetDefenses = primaryPlanet(defender).defenses || {};
   const defendingDefenses = Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(planetDefenses[key])]));
   const combatBonuses = { attackerAvionics, defenderAvionics, commandCenter:asWholeNumber(defenderBuildings.commandCenter), shipyard:asWholeNumber(defenderBuildings.shipyard) };
-  const { attackPower, defensePower, won, capacity, losses, defenseLosses, survivors } = simulateBattle({ attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, ...combatBonuses });
+  const { attackPower, defensePower, won, capacity, losses, defenderShipLosses, defenseLosses, survivors } = simulateBattle({ attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, ...combatBonuses });
   const loot = { metal: 0, crystal: 0, tritium: 0 };
   if (won) {
     let remainingCapacity = capacity;
     for (const resource of RESOURCE_KEYS) {
       const stock = primaryPlanet(defender).resources || defender.state.resources;
       const available = asWholeNumber(stock[resource]);
-      const amount = Math.min(available, Math.floor(available * 0.15), remainingCapacity);
+      const amount = Math.min(Math.floor(available * 0.9), remainingCapacity);
       loot[resource] = amount;
       remainingCapacity -= amount;
       stock[resource] = available - amount;
     }
+  }
+  for (const key of Object.keys(FLEET)) {
+    defender.state.ships[key] = Math.max(0, asWholeNumber(defender.state.ships[key]) - defenderShipLosses[key]);
   }
   if (won) for (const key of Object.keys(DEFENSE)) {
     planetDefenses[key] = asWholeNumber(planetDefenses[key]) - defenseLosses[key];
@@ -584,19 +587,20 @@ function prepareRaid(attacker, defender, rawFleet) {
     ? `${attacker.username} hat einen Raubzug geflogen und ${lootText} entwendet.`
     : `${attacker.username} hat einen Raubzug geflogen, aber deine Verteidigung hielt stand.`);
   const attackerLosses = Object.entries(losses).filter(([, amount]) => amount).map(([key, amount]) => `${amount} ${FLEET[key].name || key}`).join(", ") || "keine";
+  const defenderFleetLossText = Object.entries(defenderShipLosses).filter(([, amount]) => amount).map(([key, amount]) => `${amount} ${FLEET[key].name || key}`).join(", ") || "keine";
   const defenseLossText = Object.entries(defenseLosses).filter(([, amount]) => amount).map(([key, amount]) => `${amount} ${DEFENSE[key].name}`).join(", ") || "keine";
   addNotification(attacker.state, "combat", won ? "Kampfbericht: Sieg" : "Kampfbericht: Einsatz verloren", won
     ? `Beute: ${lootText}. Eigene Verluste: ${attackerLosses}.`
     : `Deine Flotte wurde abgewehrt. Eigene Verluste: ${attackerLosses}.`, won ? "normal" : "high");
   addNotification(defender.state, "combat", won ? "Angriffsalarm: Ressourcen entwendet" : "Angriff abgefangen", won
-    ? `${attacker.username} hat ${lootText} erbeutet. Beschädigte Abwehr: ${defenseLossText}.`
-    : `${attacker.username} wurde abgefangen. Deine Verteidigung hielt stand.`, "high");
+    ? `${attacker.username} hat ${lootText} erbeutet. Flottenverluste: ${defenderFleetLossText}. Beschädigte Abwehr: ${defenseLossText}.`
+    : `${attacker.username} wurde abgefangen. Flottenverluste: ${defenderFleetLossText}.`, "high");
   const resolvedAt = Date.now();
   const combatId = `${attacker.id}-${defender.id}-${resolvedAt}-${randomBytes(3).toString("hex")}`;
   const composition = { attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, combatBonuses };
-  addCombatReport(attacker.state, { id: combatId, at: resolvedAt, side: "attacker", opponent: defender.username, won, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, ...composition });
-  addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, ...composition });
-  return { won, fleet, survivors, loot, attackPower, defensePower, losses, defenseLosses, attackerLosses, defenseLossSummary: defenseLossText, resolvedAt };
+  addCombatReport(attacker.state, { id: combatId, at: resolvedAt, side: "attacker", opponent: defender.username, won, loot, capacity, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, ...composition });
+  addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, capacity, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, ...composition });
+  return { won, fleet, survivors, loot, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, resolvedAt };
 }
 export function flightDuration(attacker, defender, spy, at = Date.now()) {
   const distance = galaxyDistance(galaxyPosition(attacker), galaxyPosition(defender));
