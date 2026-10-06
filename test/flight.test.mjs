@@ -89,11 +89,13 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
   assert.deepEqual(battle.combatReports[0].loot, {metal:0,crystal:0,tritium:0});
   assert.equal(battle.combatReports[0].attackerFleet.battleship, 1);
   assert.equal(battle.combatReports[0].defenderFleet.frigate, 2);
+  assert.equal(battle.combatReports[0].defenderShipLosses.frigate, 1);
   assert.equal(battle.combatReports[0].defenses.rocketBattery, 3);
   assert.equal(battle.combatReports[0].defenses.teslaCoil, 2);
   const defenderReport = (await api("/api/state", "GET", undefined, bCookie)).payload.state.combatReports[0];
   assert.deepEqual(defenderReport.attackerFleet, battle.combatReports[0].attackerFleet);
   assert.deepEqual(defenderReport.defenderFleet, battle.combatReports[0].defenderFleet);
+  assert.deepEqual(defenderReport.defenderShipLosses, battle.combatReports[0].defenderShipLosses);
   assert.deepEqual(defenderReport.defenses, battle.combatReports[0].defenses);
   assert.equal(battle.pvpFlights[0].phase, "returning");
   await resolveDuePvpFlights(battle.pvpFlights[0].returnAt + 1);
@@ -139,8 +141,44 @@ test("simulator applies the server's combat arithmetic", () => {
   assert.equal(outcome.attackPower, 2400);
   assert.equal(outcome.defensePower, 850);
   assert.equal(outcome.won, true);
-  assert.equal(outcome.losses.battleship, 1);
+  assert.equal(outcome.losses.battleship, 0);
+  assert.equal(outcome.capacity, 3500);
   assert.equal(outcome.defenseLosses.teslaCoil, 1);
+});
+
+test("winning raid takes ninety percent of arrival stock within surviving cargo space and records defender losses", async () => {
+  const attacker = await api("/api/auth/register", "POST", {username:"LootAlpha",password:"secure1234"});
+  const defender = await api("/api/auth/register", "POST", {username:"LootBeta",password:"secure1234"});
+  const attackerState = attacker.payload.state;
+  attackerState.ships.battleship = 1;
+  await api("/api/state", "PUT", {state:attackerState}, attacker.cookie);
+  const target = (await api("/api/galaxy", "GET", undefined, attacker.cookie)).payload.contacts.find(contact => contact.owner === "LootBeta");
+  const flight = (await api("/api/raids", "POST", {targetId:target.id,fleet:{battleship:1}}, attacker.cookie)).payload.flight;
+  const targetState = (await api("/api/state", "GET", undefined, defender.cookie)).payload.state;
+  targetState.ships.frigate = 1;
+  const planet = targetState.planets.find(item => item.id === targetState.activePlanetId);
+  planet.defenses = {rocketBattery:1};
+  for (const resource of ["metal", "crystal", "tritium"]) {
+    planet.resources[resource] = 1000;
+    targetState.resources[resource] = 1000;
+  }
+  await api("/api/state", "PUT", {state:targetState}, defender.cookie);
+  await resolveDuePvpFlights(flight.arrivesAt + 1);
+  const attackerAfter = (await api("/api/state", "GET", undefined, attacker.cookie)).payload.state;
+  const defenderAfter = (await api("/api/state", "GET", undefined, defender.cookie)).payload.state;
+  const report = attackerAfter.combatReports[0];
+  assert.equal(report.won, true);
+  assert.deepEqual(report.loot, {metal:900,crystal:900,tritium:900});
+  assert.equal(report.capacity, 3500);
+  assert.equal(report.defenderFleet.frigate, 1);
+  assert.equal(report.defenderShipLosses.frigate, 1);
+  assert.equal(report.defenseLosses.rocketBattery, 1);
+  assert.equal(defenderAfter.ships.frigate, 0);
+  for (const resource of ["metal", "crystal", "tritium"]) assert.equal(defenderAfter.planets[0].resources[resource], 100);
+  assert.deepEqual(defenderAfter.combatReports[0].loot, report.loot);
+  await resolveDuePvpFlights(attackerAfter.pvpFlights[0].returnAt + 1);
+  const returned = (await api("/api/state", "GET", undefined, attacker.cookie)).payload.state;
+  for (const resource of ["metal", "crystal", "tritium"]) assert.equal(returned.planets[0].resources[resource], 100900);
 });
 
 test("planet production settings persist in ten-percent steps", async () => {
