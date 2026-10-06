@@ -35,7 +35,6 @@ function mutate(action) {
   return result;
 }
 function fail(message, status = 400) { throw Object.assign(new Error(message), { status }); }
-const SPY_REPORT_LIFETIME = 1000 * 60 * 60 * 2;
 const mimeTypes = {
   ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp",
@@ -422,9 +421,8 @@ function positionIsVisible(account, position) {
 function targetIsVisible(attacker, defender) {
   return positionIsVisible(attacker, galaxyPosition(defender));
 }
-function recentSpyReport(state, targetId) {
-  const now = Date.now();
-  return (Array.isArray(state.spyReports) ? state.spyReports : []).find((report) => report.targetId === targetId && Number(report.expiresAt) > now) || null;
+function knownSpyReport(state, targetId) {
+  return (Array.isArray(state.spyReports) ? state.spyReports : []).find((report) => report.side !== "defender" && report.targetId === targetId) || null;
 }
 function publicGalaxyRecord(account, observer = null) {
   const planet = primaryPlanet(account);
@@ -523,7 +521,6 @@ function spyReportFor(attacker, defender, probeCount) {
     signature: String(planet.name || "Unbenannte Signatur").slice(0, 36),
     position: galaxyPosition(defender),
     createdAt: Date.now(),
-    expiresAt: Date.now() + SPY_REPORT_LIFETIME,
     intelligence,
     probes: used,
     lost,
@@ -611,7 +608,8 @@ function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy) {
   if (!targetPlanet) fail("Dieses Ziel ist nicht verfügbar.", 404);
   const origin = activeGalaxyAccount(attacker);
   const target = { ...defender, focusPlanet: targetPlanet };
-  if (!targetIsVisible(origin, target)) fail("Dieses Ziel ist nicht verfügbar.", 404);
+  const report = spy ? null : knownSpyReport(attacker.state, signalId(target));
+  if (!targetIsVisible(origin, target) && !report) fail("Dieses Ziel ist nicht verfügbar.", 404);
   if ((attacker.state.pvpFlights || []).length >= 20) fail("Maximal 20 PvP-Flüge gleichzeitig.", 409);
   let fleet;
   if (spy) {
@@ -621,7 +619,7 @@ function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy) {
     fleet = { spyProbe: probes };
     attacker.state.lastSpyAt = Date.now();
   } else {
-    if (!recentSpyReport(attacker.state, signalId(target))) fail("Klär das Ziel zuerst mit Sonden auf.", 409);
+    if (!report) fail("Klär das Ziel zuerst mit Sonden auf.", 409);
     fleet = Object.fromEntries(Object.keys(FLEET).map(key => [key, asWholeNumber(rawFleet?.[key])]));
     if (!Object.values(fleet).some(Boolean)) fail("Wähle mindestens ein Transport- oder Kampfschiff.");
   }
