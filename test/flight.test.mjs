@@ -80,16 +80,32 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
     defender.resources[key] = 0;
     defender.planets.find(planet => planet.id === defender.activePlanetId).resources[key] = 0;
   }
+  defender.ships.frigate = 2;
+  defender.planets.find(planet => planet.id === defender.activePlanetId).defenses = {rocketBattery:3,teslaCoil:2};
   await api("/api/state", "PUT", {state:defender}, bCookie);
   await resolveDuePvpFlights(raid.arrivesAt + 1);
   const battle = (await api("/api/state", "GET", undefined, aCookie)).payload.state;
   assert.equal(battle.combatReports.length, 1);
   assert.deepEqual(battle.combatReports[0].loot, {metal:0,crystal:0,tritium:0});
+  assert.equal(battle.combatReports[0].attackerFleet.battleship, 1);
+  assert.equal(battle.combatReports[0].defenderFleet.frigate, 2);
+  assert.equal(battle.combatReports[0].defenses.rocketBattery, 3);
+  assert.equal(battle.combatReports[0].defenses.teslaCoil, 2);
+  const defenderReport = (await api("/api/state", "GET", undefined, bCookie)).payload.state.combatReports[0];
+  assert.deepEqual(defenderReport.attackerFleet, battle.combatReports[0].attackerFleet);
+  assert.deepEqual(defenderReport.defenderFleet, battle.combatReports[0].defenderFleet);
+  assert.deepEqual(defenderReport.defenses, battle.combatReports[0].defenses);
   assert.equal(battle.pvpFlights[0].phase, "returning");
   await resolveDuePvpFlights(battle.pvpFlights[0].returnAt + 1);
   const home = (await api("/api/state", "GET", undefined, aCookie)).payload.state;
   assert.equal(home.pvpFlights.length, 0);
   assert.equal(home.combatReports.length, 1);
+
+  const rescanDatabase = JSON.parse(await readFile(process.env.ACCOUNT_FILE, "utf8"));
+  rescanDatabase.accounts.flightalpha.state.lastSpyAt = Date.now() - 20_000;
+  await writeFile(process.env.ACCOUNT_FILE, JSON.stringify(rescanDatabase, null, 2), "utf8");
+  const rescan = (await api("/api/spy", "POST", {targetId:target.id,probes:1}, aCookie)).payload.flight;
+  assert.equal(rescan.kind, "spy", "a known target can be scanned again from its report");
 });
 
 test("a visible occupied planet can be attacked without any spy report", async () => {
