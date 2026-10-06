@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { simulateBattle } from "../public/combat.js";
@@ -44,6 +44,11 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
   const galaxy = (await api("/api/galaxy", "GET", undefined, aCookie)).payload;
   const target = galaxy.contacts.find(contact => contact.owner === "FlightBeta");
   assert.ok(target, "defender visible on galaxy map");
+  const unscannedRaid = await fetch(base + "/api/raids", {
+    method:"POST", headers:{"Content-Type":"application/json",Cookie:aCookie},
+    body:JSON.stringify({targetId:target.id,fleet:{battleship:1}}),
+  });
+  assert.equal(unscannedRaid.status, 409, "an unseen target still requires a spy report");
 
   const spy = (await api("/api/spy", "POST", {targetId:target.id,probes:2}, aCookie)).payload.flight;
   assert.equal(spy.phase, "outgoing");
@@ -55,12 +60,19 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
   await resolveDuePvpFlights(spy.arrivesAt + 1);
   const afterSpy = (await api("/api/state", "GET", undefined, aCookie)).payload.state;
   assert.equal(afterSpy.spyReports.length, 1);
+  assert.equal(afterSpy.spyReports[0].expiresAt, undefined, "new reports are permanent snapshots");
   assert.equal(afterSpy.pvpFlights[0].phase, "returning");
   const scannedDefender = (await api("/api/state", "GET", undefined, bCookie)).payload.state;
   assert.equal(scannedDefender.incomingFlights.length, 0);
   assert.equal(scannedDefender.spyReports[0].side, "defender");
   await resolveDuePvpFlights(afterSpy.pvpFlights[0].returnAt + 1);
   assert.equal((await api("/api/state", "GET", undefined, aCookie)).payload.state.pvpFlights.length, 0);
+
+  const database = JSON.parse(await readFile(process.env.ACCOUNT_FILE, "utf8"));
+  database.accounts.flightalpha.state.spyReports[0].expiresAt = Date.now() - 60_000;
+  await writeFile(process.env.ACCOUNT_FILE, JSON.stringify(database, null, 2), "utf8");
+  const archivedReport = (await api("/api/state", "GET", undefined, aCookie)).payload.state.spyReports[0];
+  assert.ok(archivedReport.expiresAt < Date.now(), "test report is older than its former validity window");
 
   const raid = (await api("/api/raids", "POST", {targetId:target.id,fleet:{battleship:1}}, aCookie)).payload.flight;
   assert.ok(raid.arrivesAt - raid.departedAt >= (worldSpeedAt(raid.departedAt) === 1 ? 240000 : 180000));
