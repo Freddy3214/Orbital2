@@ -4,12 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { simulateBattle } from "../public/combat.js";
+import { SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "../public/units.js";
 
 const directory = await mkdtemp(join(tmpdir(), "orbital-flight-"));
 process.env.ACCOUNT_FILE = join(directory, "accounts.json");
 process.env.PORT = "4797";
 delete process.env.DATABASE_URL;
-const { server, resolveDuePvpFlights } = await import("../server.mjs");
+const { server, resolveDuePvpFlights, flightDuration } = await import("../server.mjs");
 after(async () => {
   await new Promise(resolve => server.close(resolve));
   await rm(directory, { recursive:true, force:true });
@@ -46,7 +47,7 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
 
   const spy = (await api("/api/spy", "POST", {targetId:target.id,probes:2}, aCookie)).payload.flight;
   assert.equal(spy.phase, "outgoing");
-  assert.ok(spy.arrivesAt - spy.departedAt >= 120000);
+  assert.ok(spy.arrivesAt - spy.departedAt >= (worldSpeedAt(spy.departedAt) === 1 ? 120000 : 60000));
   const beforeSpy = (await api("/api/state", "GET", undefined, aCookie)).payload.state;
   assert.equal(beforeSpy.spyReports.length, 0);
   assert.equal(beforeSpy.ships.spyProbe, 3);
@@ -62,7 +63,7 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
   assert.equal((await api("/api/state", "GET", undefined, aCookie)).payload.state.pvpFlights.length, 0);
 
   const raid = (await api("/api/raids", "POST", {targetId:target.id,fleet:{battleship:1}}, aCookie)).payload.flight;
-  assert.ok(raid.arrivesAt - raid.departedAt >= 240000);
+  assert.ok(raid.arrivesAt - raid.departedAt >= (worldSpeedAt(raid.departedAt) === 1 ? 240000 : 180000));
   assert.equal((await api("/api/state", "GET", undefined, bCookie)).payload.state.incomingFlights[0].id, raid.id);
   const defender = (await api("/api/state", "GET", undefined, bCookie)).payload.state;
   for (const key of ["metal","crystal","tritium"]) {
@@ -79,6 +80,17 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
   const home = (await api("/api/state", "GET", undefined, aCookie)).payload.state;
   assert.equal(home.pvpFlights.length, 0);
   assert.equal(home.combatReports.length, 1);
+});
+
+test("speed transition keeps prior flights unchanged and preserves PvP warning time", () => {
+  const attacker = {id:"speed-a",state:{research:{combustionDrive:0},planets:[{id:"a",position:{x:10,y:10}}]}};
+  const defender = {id:"speed-b",state:{planets:[{id:"b",position:{x:10,y:10}}]}};
+  assert.equal(worldSpeedAt(SPEED_START_AT - 1), 1);
+  assert.equal(worldSpeedAt(SPEED_START_AT), WORLD_SPEED);
+  assert.equal(flightDuration(attacker, defender, true, SPEED_START_AT - 1), 180000);
+  assert.equal(flightDuration(attacker, defender, true, SPEED_START_AT), 60000);
+  assert.equal(flightDuration(attacker, defender, false, SPEED_START_AT - 1), 360000);
+  assert.equal(flightDuration(attacker, defender, false, SPEED_START_AT), 180000);
 });
 
 test("simulator applies the server's combat arithmetic", () => {
