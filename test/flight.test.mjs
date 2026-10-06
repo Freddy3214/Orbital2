@@ -44,11 +44,6 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
   const galaxy = (await api("/api/galaxy", "GET", undefined, aCookie)).payload;
   const target = galaxy.contacts.find(contact => contact.owner === "FlightBeta");
   assert.ok(target, "defender visible on galaxy map");
-  const unscannedRaid = await fetch(base + "/api/raids", {
-    method:"POST", headers:{"Content-Type":"application/json",Cookie:aCookie},
-    body:JSON.stringify({targetId:target.id,fleet:{battleship:1}}),
-  });
-  assert.equal(unscannedRaid.status, 409, "an unseen target still requires a spy report");
 
   const spy = (await api("/api/spy", "POST", {targetId:target.id,probes:2}, aCookie)).payload.flight;
   assert.equal(spy.phase, "outgoing");
@@ -70,6 +65,9 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
 
   const database = JSON.parse(await readFile(process.env.ACCOUNT_FILE, "utf8"));
   database.accounts.flightalpha.state.spyReports[0].expiresAt = Date.now() - 60_000;
+  database.accounts.flightalpha.state.spyReports[0].intelligence = 1;
+  database.accounts.flightalpha.state.spyReports[0].ships = null;
+  database.accounts.flightalpha.state.spyReports[0].defenses = null;
   await writeFile(process.env.ACCOUNT_FILE, JSON.stringify(database, null, 2), "utf8");
   const archivedReport = (await api("/api/state", "GET", undefined, aCookie)).payload.state.spyReports[0];
   assert.ok(archivedReport.expiresAt < Date.now(), "test report is older than its former validity window");
@@ -92,6 +90,21 @@ test("PvP flights warn the defender and settle from arrival-time state", async (
   const home = (await api("/api/state", "GET", undefined, aCookie)).payload.state;
   assert.equal(home.pvpFlights.length, 0);
   assert.equal(home.combatReports.length, 1);
+});
+
+test("a visible occupied planet can be attacked without any spy report", async () => {
+  const attacker = await api("/api/auth/register", "POST", {username:"BlindAlpha",password:"secure1234"});
+  const defender = await api("/api/auth/register", "POST", {username:"BlindBeta",password:"secure1234"});
+  const state = attacker.payload.state;
+  state.ships.battleship = 1;
+  await api("/api/state", "PUT", {state}, attacker.cookie);
+  const galaxy = (await api("/api/galaxy", "GET", undefined, attacker.cookie)).payload;
+  const target = galaxy.contacts.find(contact => contact.owner === "BlindBeta");
+  assert.ok(target, "target visible for a blind attack");
+  assert.equal((await api("/api/state", "GET", undefined, attacker.cookie)).payload.state.spyReports.length, 0);
+  const raid = (await api("/api/raids", "POST", {targetId:target.id,fleet:{battleship:1}}, attacker.cookie)).payload.flight;
+  assert.equal(raid.kind, "raid");
+  assert.equal((await api("/api/state", "GET", undefined, defender.cookie)).payload.state.incomingFlights[0].id, raid.id);
 });
 
 test("speed transition keeps prior flights unchanged and preserves PvP warning time", () => {
