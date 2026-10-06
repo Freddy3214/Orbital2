@@ -103,9 +103,6 @@ nav button.active { border-color: rgba(101, 237, 219, .18); color: var(--text); 
 .gate-music-link:hover, .gate-music-link:focus-visible { color: #fff1d1; text-decoration: underline; }
 .commander-gate { overflow-y: auto; align-content: start; }
 .gate-card { margin: auto 0; }
-.gate-music-player { display: grid; justify-items: center; gap: 8px; margin: 13px auto 0; }
-.gate-music-player iframe { width: min(100%, 320px); height: 200px; border: 1px solid rgba(205, 176, 122, .35); border-radius: 9px; background: #060b13; }
-.gate-music-player button { font-size: 10px; }
 .system-nav { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
 .system-nav .eyebrow { margin: 0; text-align: center; }
 .system-nav button { min-width: 34px; padding: 5px 8px; }
