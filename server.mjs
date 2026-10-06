@@ -619,7 +619,6 @@ function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy) {
     fleet = { spyProbe: probes };
     attacker.state.lastSpyAt = Date.now();
   } else {
-    if (!report) fail("Klär das Ziel zuerst mit Sonden auf.", 409);
     fleet = Object.fromEntries(Object.keys(FLEET).map(key => [key, asWholeNumber(rawFleet?.[key])]));
     if (!Object.values(fleet).some(Boolean)) fail("Wähle mindestens ein Transport- oder Kampfschiff.");
   }
