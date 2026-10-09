@@ -156,3 +156,7 @@ body { background:#27251f; }.starfield { background:radial-gradient(ellipse at t
 .starter-flightpath small { color:#c9c6b9; font-size:10px; }
 .starter-flightpath .primary-button { flex:0 0 auto; }
 @media (max-width:640px) { .starter-flightpath { align-items:stretch; flex-direction:column; } .starter-flightpath .primary-button { width:100%; } }
+
+/* Computer-controlled outposts */
+.npc-intel{margin:14px 0;padding:12px;border:1px solid #d2a253;border-left:3px solid #e8b95d;border-radius:6px;background:rgba(192,139,47,.1)}
+.npc-intel>strong{color:#f1c97d}.npc-intel p{margin:8px 0}.npc-intel small{color:var(--text-muted,#c5b99f)}
