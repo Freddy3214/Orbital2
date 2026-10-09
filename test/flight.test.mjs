@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { after, test } from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,6 +12,7 @@ process.env.ACCOUNT_FILE = join(directory, "accounts.json");
 process.env.PORT = "4797";
 delete process.env.DATABASE_URL;
 const { server, resolveDuePvpFlights, flightDuration, advanceNpcWorld } = await import("../server.mjs");
+if (!server.listening) await once(server,"listening");
 after(async () => {
   await new Promise(resolve => server.close(resolve));
   await rm(directory, { recursive:true, force:true });
