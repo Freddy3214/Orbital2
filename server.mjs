@@ -110,6 +110,136 @@ function normalizeAccount(account) {
   state.resources = active.resources;
   return account;
 }
+
+const NPC_HOUR = 60 * 60_000;
+const NPC_FACTIONS = [
+  { id:"scrappers", name:"NPC Schrottsammler", world:"Rosthafen", tier:1, passive:true, offset:[5,4] },
+  { id:"miners", name:"NPC Freie Schürfer", world:"Staubgrube", tier:1, passive:true, offset:[-6,3] },
+  { id:"corsairs", name:"NPC Nebelkorsaren", world:"Nebelbucht", tier:2, offset:[8,-5] },
+  { id:"marauders", name:"NPC Grenzplünderer", world:"Schattenlager", tier:2, offset:[-8,-5] },
+  { id:"syndicate", name:"NPC Eisensyndikat", world:"Eisenwacht", tier:3, offset:[3,10] },
+  { id:"legion", name:"NPC Aschelegion", world:"Aschefeste", tier:3, offset:[-3,-10] },
+];
+function npcConfig(account) {
+  return NPC_FACTIONS.find(config => account?.id === `npc-${config.id}`);
+}
+function createNpcAccount(config, anchor, now) {
+  const position = {x:Math.max(4,Math.min(GALAXY_SPAN-4,anchor.x+config.offset[0])),y:Math.max(4,Math.min(GALAXY_SPAN-4,anchor.y+config.offset[1]))};
+  const state = defaultState(config.name, position);
+  const planet = state.planets[0], tier = config.tier;
+  planet.id = `npc-world-${config.id}`;
+  planet.name = config.world;
+  planet.type = tier === 1 ? "arid" : tier === 2 ? "ice" : "volcanic";
+  planet.classification = "NPC-Stützpunkt";
+  planet.fields = 150 + tier * 40;
+  planet.buildings = {...freshBuildings(false),metalMine:tier*4,crystalMine:tier*3,tritiumSynthesizer:tier*2,solarPlant:tier*5,shipyard:tier*2};
+  planet.usedFields = Object.values(planet.buildings).reduce((sum,n)=>sum+n,0);
+  planet.defenses = {rocketBattery:tier === 1 ? 1 : tier*3,teslaCoil:tier === 3 ? 2 : 0};
+  const factor = [0,1,3,8][tier];
+  planet.resources = {metal:30000*factor,crystal:18000*factor,tritium:9000*factor,lastUpdate:now};
+  state.resources = planet.resources;
+  state.activePlanetId = planet.id;
+  state.buildings = {...planet.buildings};
+  state.ships = {spyProbe:12,cargoDrone:4*tier,interceptor:3*tier,frigate:tier === 1 ? 0 : tier*2,cruiser:tier === 3 ? 2 : 0};
+  state.research.deepSpaceSensors = tier*2;
+  state.research.avionics = tier-1;
+  state.buildBoostFrom = 0;
+  state.buildBoostUntil = 0;
+  state.npc = { tier, passive:Boolean(config.passive), updatedAt:now, repairedAt:now, nextActionAt:now+(30+NPC_FACTIONS.indexOf(config)*5)*60_000, nextKind:"spy" };
+  return {id:`npc-${config.id}`,username:config.name,createdAt:now,password:{salt:"",hash:""},state};
+}
+function replenishNpc(account, now) {
+  const config = npcConfig(account);
+  if (!config) return;
+  const state = account.state, planet = primaryPlanet(account), meta = state.npc;
+  const hours = Math.min(72,Math.max(0,now-meta.updatedAt)/NPC_HOUR);
+  const factor = [0,1,3,8][config.tier];
+  for (const [key,cap] of Object.entries({metal:30000*factor,crystal:18000*factor,tritium:9000*factor}))
+    planet.resources[key] = Math.min(cap,Math.max(0,Number(planet.resources[key])||0) + hours*cap*.1);
+  meta.updatedAt = Math.max(meta.updatedAt,now);
+  planet.resources.lastUpdate = now;
+  // Replacements take six hours and include ships already in flight.
+  if (now-meta.repairedAt >= 6*NPC_HOUR) {
+    const template = createNpcAccount(config, {x:110,y:110}, now).state;
+    for (const [key,total] of Object.entries(template.ships)) {
+      const deployed = (state.pvpFlights || []).reduce((sum,flight)=>sum+asWholeNumber((flight.phase === "returning" ? flight.survivors : flight.fleet)?.[key]),0);
+      state.ships[key] = Math.max(asWholeNumber(state.ships[key]),Math.max(0,total-deployed));
+    }
+    for (const [key,total] of Object.entries(template.planets[0].defenses))
+      planet.defenses[key] = Math.max(asWholeNumber(planet.defenses[key]),total);
+    meta.repairedAt = now;
+  }
+}
+function applyNpcWorld(accounts, now, allowActions = true) {
+  const changed = new Set();
+  const humans = accounts.filter(account=>!npcConfig(account));
+  for (const [index,config] of NPC_FACTIONS.entries()) {
+    if (accounts.some(account=>account.id === `npc-${config.id}`)) continue;
+    const anchor = humans.length ? galaxyPosition(humans[index % humans.length]) : {x:110,y:110};
+    const account = createNpcAccount(config,anchor,now);
+    accounts.push(account);
+    changed.add(account);
+  }
+  for (const npc of accounts.filter(account=>npcConfig(account))) {
+    replenishNpc(npc,now);
+    changed.add(npc);
+    const meta = npc.state.npc;
+    if (!allowActions || meta.passive || meta.nextActionAt > now || npc.state.pvpFlights?.length) continue;
+    meta.nextActionAt = now + 10*60_000;
+    const spy = meta.nextKind !== "raid";
+    const candidates = humans.filter(player => {
+      if (now-player.createdAt < 24*NPC_HOUR) return false;
+      if ((player.state.incomingFlights || []).some(flight=>flight.npc)) return false;
+      if (now-asWholeNumber(player.state[spy ? "npcLastSpyAt" : "npcLastRaidAt"]) < (spy ? NPC_HOUR : 6*NPC_HOUR)) return false;
+      const target = primaryPlanet(player);
+      if (galaxyDistance(galaxyPosition(npc),galaxyPosition(player)) > 60) return false;
+      if (spy) return true;
+      const report = knownSpyReport(npc.state,signalId(player));
+      return report && now-report.createdAt < 6*NPC_HOUR && RESOURCE_KEYS.reduce((sum,key)=>sum+asWholeNumber(report.resources?.[key]),0) >= 1000;
+    }).sort((a,b)=>asWholeNumber(a.state[spy ? "npcLastSpyAt" : "npcLastRaidAt"])-asWholeNumber(b.state[spy ? "npcLastSpyAt" : "npcLastRaidAt"]) || a.id.localeCompare(b.id));
+    const target = candidates[0];
+    if (!target) { if (!spy) meta.nextKind = "spy"; continue; }
+    const tier = npcConfig(npc).tier;
+    // Small, fixed raiding parties: the NPC never scales its fleet to overwhelm a target.
+    const raidFleet = tier === 2 ? {interceptor:3,cargoDrone:2} : {interceptor:5,frigate:1,smallTransport:0,cargoDrone:3};
+    const fleet = spy ? {probes:2} : Object.fromEntries(Object.entries(raidFleet).map(([key,n])=>[key,Math.min(n,asWholeNumber(npc.state.ships[key]))]));
+    if (spy ? asWholeNumber(npc.state.ships.spyProbe)<2 : !Object.values(fleet).some(Boolean)) continue;
+    const flight = launchPvpAction(npc,target,primaryPlanet(target).id,fleet,spy,now);
+    target.state[spy ? "npcLastSpyAt" : "npcLastRaidAt"] = now;
+    meta.nextKind = spy ? "raid" : "spy";
+    meta.nextActionAt = flight.returnAt + (spy ? 5*60_000 : 2*NPC_HOUR);
+    changed.add(target);
+  }
+  return changed;
+}
+async function advanceNpcWorld(now = Date.now(), allowActions = true) {
+  if (pool) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(812902)");
+      const result = await client.query("SELECT * FROM accounts ORDER BY id FOR UPDATE");
+      const accounts = result.rows.map(accountFromRow), existing = new Set(accounts.map(account=>account.id));
+      for (const account of applyNpcWorld(accounts,now,allowActions)) {
+        if (existing.has(account.id))
+          await client.query("UPDATE accounts SET state = $2::jsonb WHERE id = $1",[account.id,JSON.stringify(account.state)]);
+        else
+          await client.query("INSERT INTO accounts (id,account_key,username,created_at,password_salt,password_hash,state) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb) ON CONFLICT (id) DO NOTHING",[account.id,`!npc:${account.id}`,account.username,account.createdAt,"","",JSON.stringify(account.state)]);
+      }
+      await client.query("COMMIT");
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  } else {
+    const database = await loadLocalDatabase();
+    const accounts = Object.values(database.accounts).map(normalizeAccount);
+    for (const account of applyNpcWorld(accounts,now,allowActions)) {
+      const key = npcConfig(account) ? `!npc:${account.id}` : accountKey(account.username);
+      database.accounts[key] = account;
+    }
+    await saveLocalDatabase(database);
+  }
+}
+
 function boostFinish(duration, at, until) {
   const fastWork = Math.min(duration, Math.max(0, until-at)*20);
   return at + fastWork/20 + duration-fastWork;
@@ -201,6 +331,9 @@ async function updateAccountState(key, state) {
   state.buildBoostFrom = previous.state.buildBoostFrom || 0;
   state.spyReports = previous.state.spyReports || [];
   state.lastSpyAt = previous.state.lastSpyAt || 0;
+  state.npcLastSpyAt = previous.state.npcLastSpyAt || 0;
+  state.npcLastRaidAt = previous.state.npcLastRaidAt || 0;
+  delete state.npc;
   // Flight manifests and inbound warnings are server-owned; clients may not forge or erase them.
   state.pvpFlights = previous.state.pvpFlights || [];
   state.incomingFlights = previous.state.incomingFlights || [];
@@ -329,6 +462,8 @@ function galaxyPosition(account) {
   };
 }
 function starterPosition(accounts, seedValue) {
+  const humans = accounts.filter(account=>!npcConfig(account));
+  accounts = humans.length ? humans : accounts.slice(0,1);
   if (!accounts.length) {
     const seed = stableHash(seedValue);
     return { x: 20 + seed % (GALAXY_SPAN - 40), y: 20 + Math.floor(seed / 223) % (GALAXY_SPAN - 40) };
@@ -432,6 +567,9 @@ function publicGalaxyRecord(account, observer = null) {
     signature: String(planet.name || "Unbenannte Signatur").slice(0, 36),
     owner: String(account.username || "Unbekannt").slice(0, 36),
     own: account.id === observer?.id,
+    npc: Boolean(npcConfig(account)),
+    npcTier: npcConfig(account)?.tier,
+    npcPassive: Boolean(npcConfig(account)?.passive),
     planetId: account.id === observer?.id ? planet.id : undefined,
     position,
     distance: observer ? galaxyDistance(galaxyPosition(observer), position) : null,
@@ -476,6 +614,7 @@ function galaxySystems(contacts, observer) {
           owner: contact.free ? null : contact.owner,
           free: Boolean(contact.free),
           own: Boolean(contact.own), planetId: contact.planetId,
+          npc: Boolean(contact.npc), npcTier: contact.npcTier, npcPassive: contact.npcPassive,
           empty: false,
         };
       }
@@ -609,22 +748,22 @@ export function flightDuration(attacker, defender, spy, at = Date.now()) {
   const minimum = speed === 1 ? (spy ? 120000 : 240000) : (spy ? 60000 : 180000);
   return Math.round(Math.max(minimum, ((spy ? 180000 : 360000) + distance * 10000) / ((1 + drive * .12) * speed)));
 }
-function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy) {
+function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, now = Date.now()) {
   normalizeAccount(attacker); normalizeAccount(defender);
   const targetPlanet = defender.state.planets.find(planet => planet.id === targetPlanetId);
   if (!targetPlanet) fail("Dieses Ziel ist nicht verfügbar.", 404);
   const origin = activeGalaxyAccount(attacker);
   const target = { ...defender, focusPlanet: targetPlanet };
   const report = knownSpyReport(attacker.state, signalId(target));
-  if (!targetIsVisible(origin, target) && !report) fail("Dieses Ziel ist nicht verfügbar.", 404);
+  if (!npcConfig(attacker) && !targetIsVisible(origin, target) && !report) fail("Dieses Ziel ist nicht verfügbar.", 404);
   if ((attacker.state.pvpFlights || []).length >= 20) fail("Maximal 20 PvP-Flüge gleichzeitig.", 409);
   let fleet;
   if (spy) {
     const probes = Number(rawFleet?.probes);
     if (!Number.isInteger(probes) || probes < 1 || probes > 12) fail("Wähle 1 bis 12 Sonden.");
-    if (Date.now() - Number(attacker.state.lastSpyAt || 0) < 15000) fail("Sondenkanal belegt. Bitte 15 Sekunden zwischen Scans warten.", 429);
+    if (now - Number(attacker.state.lastSpyAt || 0) < 15000) fail("Sondenkanal belegt. Bitte 15 Sekunden zwischen Scans warten.", 429);
     fleet = { spyProbe: probes };
-    attacker.state.lastSpyAt = Date.now();
+    attacker.state.lastSpyAt = now;
   } else {
     fleet = Object.fromEntries(Object.keys(FLEET).map(key => [key, asWholeNumber(rawFleet?.[key])]));
     if (!Object.values(fleet).some(Boolean)) fail("Wähle mindestens ein Transport- oder Kampfschiff.");
@@ -633,17 +772,17 @@ function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy) {
     if (amount > asWholeNumber(attacker.state.ships?.[key])) fail("Nicht genügend Schiffe vorhanden.");
   }
   for (const [key, amount] of Object.entries(fleet)) attacker.state.ships[key] = asWholeNumber(attacker.state.ships[key]) - amount;
-  const now = Date.now(), duration = flightDuration(origin, target, spy);
+  const duration = npcConfig(attacker) ? Math.max(spy ? 5*60_000 : 15*60_000,flightDuration(origin,target,spy,now)) : flightDuration(origin, target, spy, now);
   const flight = {
     id: randomBytes(12).toString("hex"), kind: spy ? "spy" : "raid", phase: "outgoing",
     attackerId: attacker.id, defenderId: defender.id, sourcePlanetId: primaryPlanet(origin).id,
     sourceName: primaryPlanet(origin).name, targetPlanetId, targetName: targetPlanet.name,
-    attackerName: attacker.username, defenderName: defender.username, fleet,
+    attackerName: attacker.username, defenderName: defender.username, fleet, npc: Boolean(npcConfig(attacker)),
     departedAt: now, arrivesAt: now + duration, returnAt: now + duration * 2, duration,
   };
   attacker.state.pvpFlights = [...(attacker.state.pvpFlights || []), flight];
   defender.state.incomingFlights = [...(defender.state.incomingFlights || []), {
-    id: flight.id, kind: flight.kind, attackerName: attacker.username, targetPlanetId,
+    id: flight.id, kind: flight.kind, attackerName: attacker.username, targetPlanetId, npc: Boolean(npcConfig(attacker)),
     targetName: targetPlanet.name, arrivesAt: flight.arrivesAt, departedAt: now,
   }];
   addStateLog(attacker.state, spy ? "scan" : "mission", `${spy ? "Sonden" : "Angriffsflotte"} unterwegs zu ${targetPlanet.name}. Ankunft ${new Date(flight.arrivesAt).toLocaleTimeString("de-DE")}.`);
@@ -687,6 +826,7 @@ function settlePvpFlight(attacker, defender, flightId, now) {
   const flight = (attacker.state.pvpFlights || []).find(item => item.id === flightId);
   if (!flight) return false;
   if (flight.phase === "outgoing" && flight.arrivesAt <= now) {
+    replenishNpc(defender,now);
     const targetPlanet = defender.state.planets.find(planet => planet.id === flight.targetPlanetId);
     if (targetPlanet) {
       const target = { ...defender, focusPlanet: targetPlanet };
@@ -749,10 +889,17 @@ async function resolveDuePvpFlights(now = Date.now()) {
       await resolveOnePvpFlight(attacker.id, flight.defenderId, flight.id, now);
 }
 let lastFlightSweep = 0;
+let lastNpcSweep = 0;
 async function sweepFlights() {
   if (Date.now() - lastFlightSweep < 5000) return;
   lastFlightSweep = Date.now();
-  await mutate(resolveDuePvpFlights);
+  await mutate(async () => {
+    await resolveDuePvpFlights();
+    if (Date.now()-lastNpcSweep >= 60_000) {
+      await advanceNpcWorld();
+      lastNpcSweep = Date.now();
+    }
+  });
 }
 async function sendPlayerMessage(senderKey, recipientName, rawSubject, rawBody) {
   const recipientKey = accountKey(recipientName);
@@ -991,6 +1138,7 @@ const server = createServer(async (request, response) => {
       const username = cleanUsername(body.username);
       const password = cleanPassword(body.password);
       if (!username) return json(response, 400, { error: "Der Kommandantenname braucht 3–20 Zeichen." });
+      if (/^NPC(?: |$)/i.test(username)) return json(response,400,{error:"Namen mit NPC sind für Computergegner reserviert."});
       if (!password) return json(response, 400, { error: "Das Passwort braucht mindestens 8 Zeichen." });
       const key = accountKey(username);
       if (await accountByKey(key)) return json(response, 409, { error: "Dieser Kommandantenname ist bereits vergeben." });
@@ -1011,7 +1159,7 @@ const server = createServer(async (request, response) => {
       const password = String(body.password || "");
       const key = username && accountKey(username);
       const account = key && await accountByKey(key);
-      if (!account || !(await passwordMatches(password, account.password))) return json(response, 401, { error: "Name oder Passwort ist nicht korrekt." });
+      if (!account || npcConfig(account) || !(await passwordMatches(password, account.password))) return json(response, 401, { error: "Name oder Passwort ist nicht korrekt." });
       issueSession(response, key);
       return json(response, 200, { user: publicAccount(account), state: account.state, capabilities: { testGrant: hasTestGrantAccess(account) } });
     }
@@ -1043,7 +1191,7 @@ const server = createServer(async (request, response) => {
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const query = cleanUsername(url.searchParams.get("q") || "").toLocaleLowerCase("de-DE");
       const players = (await allAccounts())
-        .filter((account) => !query || account.username.toLocaleLowerCase("de-DE").includes(query))
+        .filter((account) => !npcConfig(account) && (!query || account.username.toLocaleLowerCase("de-DE").includes(query)))
         .map((account) => ({ username: account.username, self: account.id === current.account.id, score: score(account.state), planets: account.state.planets?.length || 1 }))
         .sort((a, b) => Number(b.self)-Number(a.self) || b.score - a.score || a.username.localeCompare(b.username, "de")).slice(0, 20);
       return json(response, 200, { players });
@@ -1112,7 +1260,7 @@ const server = createServer(async (request, response) => {
       return json(response, 201, await mutate(() => sendPlayerMessage(current.key, cleanUsername(body.recipient), body.subject, body.body)));
     }
     if (request.method === "GET" && url.pathname === "/api/leaderboard") {
-      const ranking = (await allAccounts()).map((account) => ({
+      const ranking = (await allAccounts()).filter(account=>!npcConfig(account)).map((account) => ({
         commander: account.username, score: score(account.state), planets: account.state.planets?.length || 1,
       })).sort((a, b) => b.score - a.score || a.commander.localeCompare(b.commander, "de"));
       return json(response, 200, ranking);
@@ -1190,9 +1338,10 @@ setInterval(() => {
   for (const [id, session] of sessions) if (session.expiresAt <= now) sessions.delete(id);
 }, 1000 * 60 * 15).unref();
 
-export { server, resolveDuePvpFlights };
+export { server, resolveDuePvpFlights, advanceNpcWorld };
 storageReady.then(async () => {
   await applyLordFredoCredit();
+  await mutate(()=>advanceNpcWorld(Date.now(),false));
   server.listen(port, process.env.HOST || "0.0.0.0", () => console.log(`Orbital Foundry is live at http://localhost:${port}`));
 }).catch((error) => {
   console.error("Database initialization failed", error);
