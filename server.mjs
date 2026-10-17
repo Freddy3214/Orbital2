@@ -9,8 +9,16 @@ import pg from "pg";
 import { FLEET, DEFENSE, worldSpeedAt } from "./public/units.js";
 import { simulateBattle } from "./public/combat.js";
 import { requestLocale } from "./locale.mjs";
+import {atomicJsonWriter} from "./storage.mjs";
+import {parseCookies,readJsonBody,createRequestGuard} from "./request-safety.mjs";
 
-const scrypt = promisify(scryptCallback);
+const rawScrypt = promisify(scryptCallback);
+let passwordJobs=0;
+async function scrypt(...args) {
+  if(passwordJobs>=2)fail("Anmeldung ausgelastet. Bitte gleich erneut versuchen.",503);
+  passwordJobs++;
+  try{return await rawScrypt(...args);}finally{passwordJobs--;}
+}
 const root = dirname(fileURLToPath(import.meta.url));
 const publicRoot = join(root, "public");
 const accountFile = process.env.ACCOUNT_FILE || join(root, "data", "accounts.json");
@@ -81,24 +89,19 @@ function cleanUsername(value) {
 function accountKey(username) { return username.toLocaleLowerCase("de-DE"); }
 function cleanPassword(value) { const password = String(value || ""); return password.length >= 8 && password.length <= 128 ? password : ""; }
 function cleanPlanetName(value) { return String(value || "").trim().replace(/[^\p{L}\p{N} .'-]/gu, "").replace(/\s+/g, " ").slice(0, 28); }
-function emptyDatabase() { return { version: 1, accounts: {} }; }
+function emptyDatabase() { return { version: 1, accounts: Object.create(null) }; }
 async function loadLocalDatabase() {
   try {
     const parsed = JSON.parse(await readFile(accountFile, "utf8"));
-    return parsed && typeof parsed === "object" && parsed.accounts && typeof parsed.accounts === "object" ? parsed : emptyDatabase();
+    if(!parsed || typeof parsed!=="object" || !parsed.accounts || typeof parsed.accounts!=="object" || Array.isArray(parsed.accounts))throw new Error("Invalid account storage; refusing to overwrite it.");
+    Object.setPrototypeOf(parsed.accounts,null);
+    return parsed;
   } catch (error) {
     if (error.code === "ENOENT") return emptyDatabase();
     throw error;
   }
 }
-let writeChain = Promise.resolve();
-function saveLocalDatabase(database) {
-  writeChain = writeChain.then(async () => {
-    await mkdir(dirname(accountFile), { recursive: true });
-    await writeFile(accountFile, JSON.stringify(database, null, 2), "utf8");
-  });
-  return writeChain;
-}
+const saveLocalDatabase=atomicJsonWriter(accountFile);
 function normalizeAccount(account) {
   if (!account) return account;
   const state = account.state;
@@ -321,6 +324,7 @@ async function createAccount(key, account) {
     return;
   }
   const database = await loadLocalDatabase();
+  if(Object.hasOwn(database.accounts,key))fail("Dieser Kommandantenname ist bereits vergeben.",409);
   database.accounts[key] = account;
   await saveLocalDatabase(database);
 }
@@ -962,12 +966,6 @@ async function passwordMatches(password, record) {
   const actual = Buffer.from(await scrypt(password, record.salt, 64));
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
-function parseCookies(header = "") {
-  return Object.fromEntries(header.split(";").map((part) => {
-    const index = part.indexOf("=");
-    return index < 0 ? [] : [part.slice(0, index).trim(), decodeURIComponent(part.slice(index + 1).trim())];
-  }).filter((entry) => entry.length));
-}
 function activeSession(request) {
   const id = parseCookies(request.headers.cookie).of_session;
   const session = id && sessions.get(id);
@@ -1048,17 +1046,7 @@ function json(response, status, payload, headers = {}) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", ...headers });
   response.end(JSON.stringify(payload));
 }
-function readBody(request) {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    request.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 500_000) request.destroy(new Error("Payload too large"));
-    });
-    request.on("end", () => { try { resolve(body ? JSON.parse(body) : {}); } catch { reject(new Error("Invalid JSON")); } });
-    request.on("error", reject);
-  });
-}
+const readBody=readJsonBody;
 async function authenticatedAccount(request) {
   const session = activeSession(request);
   if (!session) return null;
@@ -1066,7 +1054,7 @@ async function authenticatedAccount(request) {
   return account ? { account, key: session.key } : null;
 }
 async function serveStatic(pathname, request, response) {
-  const requested = pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));
+  let requested;try{requested=pathname === "/" ? "index.html" : decodeURIComponent(pathname.slice(1));}catch{return json(response,400,{error:"Ungültige Adresse."});}
   const filePath = normalize(join(publicRoot, requested));
   if (!filePath.startsWith(`${publicRoot}${sep}`) && filePath !== join(publicRoot, "index.html")) return json(response, 403, { error: "Forbidden" });
   try {
@@ -1112,9 +1100,11 @@ function demoAccount(activeId = "demo-home") {
   ];
   return {id:"demo",username:"Demo Commander",state};
 }
+const requestGuard=createRequestGuard();
 const server = createServer(async (request, response) => {
-  const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
   try {
+    let url;try{url=new URL(request.url, `http://${request.headers.host || "localhost"}`);}catch{fail("Ungültige Adresse.",400);}
+    requestGuard(request,url);
     await storageReady;
     if (url.pathname.startsWith("/api/") && !url.pathname.startsWith("/api/demo") && url.pathname !== "/api/locale") await sweepFlights();
     if (request.method === "GET" && url.pathname === "/health") {
@@ -1157,6 +1147,7 @@ const server = createServer(async (request, response) => {
       const body = await readBody(request);
       const username = cleanUsername(body.username);
       const password = String(body.password || "");
+      if(!cleanPassword(password))return json(response,401,{error:"Name oder Passwort ist nicht korrekt."});
       const key = username && accountKey(username);
       const account = key && await accountByKey(key);
       if (!account || npcConfig(account) || !(await passwordMatches(password, account.password))) return json(response, 401, { error: "Name oder Passwort ist nicht korrekt." });
@@ -1325,13 +1316,17 @@ const server = createServer(async (request, response) => {
       const result = await mutate(() => executeRaid(current.key, targetId, spy ? { probes: body.probes } : body.fleet || {}, spy));
       return json(response, 200, result);
     }
-    if (request.method === "GET") return serveStatic(url.pathname === "/demo" ? "/" : url.pathname, request, response);
+    if (request.method === "GET") return await serveStatic(url.pathname === "/demo" ? "/" : url.pathname, request, response);
     return json(response, 405, { error: "Method not allowed" });
   } catch (error) {
-    console.error(error);
+    if(!error?.status)console.error("Request failed",error?.code||"internal");
+    if(error?.retryAfter)response.setHeader("Retry-After",String(error.retryAfter));
     json(response, error?.status || 500, { error: error?.status ? error.message : "Server error" });
   }
 });
+server.requestTimeout=15000;
+server.headersTimeout=10000;
+server.keepAliveTimeout=5000;
 
 setInterval(() => {
   const now = Date.now();

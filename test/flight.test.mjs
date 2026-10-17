@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { simulateBattle } from "../public/combat.js";
 import { SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "../public/units.js";
 
-const directory = await mkdtemp(join(tmpdir(), "orbital-flight-"));
+const directory = await mkdtemp(join(process.env.ORBITAL_TEST_ROOT || tmpdir(), "orbital-flight-"));
 process.env.ACCOUNT_FILE = join(directory, "accounts.json");
 process.env.PORT = "4797";
 delete process.env.DATABASE_URL;
@@ -18,6 +18,32 @@ after(async () => {
   await rm(directory, { recursive:true, force:true });
 });
 const base = "http://127.0.0.1:4797";
+test("malformed requests fail safely without damaging the running game",async()=>{
+  const post=(text,extra={})=>fetch(base+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',...extra},body:text});
+  assert.equal((await post('{')).status,400);
+  assert.equal((await post('null')).status,400);
+  assert.equal((await post('{}',{'Content-Type':'text/plain'})).status,415);
+  assert.equal((await post('{}',{Origin:'https://other.invalid'})).status,403);
+  assert.equal((await post(JSON.stringify({username:'FlightAlpha',password:'x'.repeat(10000)}))).status,401);
+  assert.equal((await fetch(base+'/api/session',{headers:{Cookie:'broken=%E0%A4%A; of_session=missing'}})).status,401);
+  assert.equal((await fetch(base+'/%E0%A4%A')).status,400);
+  assert.equal((await post(JSON.stringify({padding:'x'.repeat(500001)}))).status,413);
+  assert.equal((await fetch(base+'/health')).status,200);
+});
+test("simultaneous registrations cannot replace an existing commander",async()=>{
+  const signup=()=>fetch(base+'/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:'SameCommander',password:'local-only-password'})});
+  const results=await Promise.all([signup(),signup()]);
+  assert.deepEqual(results.map(r=>r.status).sort(),[201,409]);
+  const winner=results.find(r=>r.status===201),cookie=winner.headers.get('set-cookie').split(';')[0];
+  assert.equal((await fetch(base+'/api/session',{headers:{Cookie:cookie}})).status,200);
+  // These legal names must be ordinary own properties, not Object.prototype lookups.
+  for(const username of ['constructor','__proto__']){
+    const response=await fetch(base+'/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password:'local-only-password'})});
+    assert.equal(response.status,201);
+    const session=await fetch(base+'/api/session',{headers:{Cookie:response.headers.get('set-cookie').split(';')[0]}});
+    assert.equal((await session.json()).user.username,username);
+  }
+});
 async function api(path, method = "GET", body, cookie) {
   const response = await fetch(base + path, { method, headers:{ ...(body ? { "Content-Type":"application/json" } : {}), ...(cookie ? { Cookie:cookie } : {}) }, body:body ? JSON.stringify(body) : undefined });
   const payload = await response.json();
