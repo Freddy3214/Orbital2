@@ -18,6 +18,11 @@ after(async () => {
   await rm(directory, { recursive:true, force:true });
 });
 const base = "http://127.0.0.1:4797";
+test('public discovery pages and search crawler files are available without an account',async()=>{
+  for(const [path,type]of [['/discover.html','text/html'],['/robots.txt','text/plain'],['/sitemap.xml','application/xml']]){
+    const response=await fetch(base+path);assert.equal(response.status,200);assert.ok(response.headers.get('content-type').startsWith(type));
+  }
+});
 test("malformed requests fail safely without damaging the running game",async()=>{
   const post=(text,extra={})=>fetch(base+'/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json',...extra},body:text});
   assert.equal((await post('{')).status,400);
