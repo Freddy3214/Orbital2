@@ -1,0 +1,11 @@
+node_modules/
+data/
+.qa/
+qa-rename-*/
+backups/
+.env
+.env.*
+!.env.example
+*.backup
+*.dump
+*.log
