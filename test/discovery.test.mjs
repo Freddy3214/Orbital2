@@ -11,6 +11,7 @@ test('search and sharing pages use real links, artwork and clear alpha/demo disc
   const html=await readFile(new URL('../public/discover.html',import.meta.url),'utf8');
   assert.match(html,/<html lang="en">/);assert.match(html,/EARLY ALPHA/);assert.match(html,/read-only/);assert.match(html,/free account is needed to play/i);
   assert.match(html,/property="og:image"/);assert.match(html,/name="description"/);assert.match(html,/<link rel="canonical"/);
+  assert.match(html,/@type": "VideoGame"/);assert.match(html,/isAccessibleForFree/);
   for(const [,path]of html.matchAll(/(?:href|src)="(\/[^"?#]*)/g))if(path!=='/'&&path!=='/demo')await readFile(new URL('../public'+path,import.meta.url));
   const robots=await readFile(new URL('../public/robots.txt',import.meta.url),'utf8');assert.match(robots,/Disallow: \/api\//);assert.match(robots,/sitemap.xml/);
   const sitemap=await readFile(new URL('../public/sitemap.xml',import.meta.url),'utf8');assert.match(sitemap,/discover.html/);
