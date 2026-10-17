@@ -1,5 +1,15 @@
 # Orbital Foundry
 
+**Free browser space-strategy alpha · English / Deutsch · No download**
+
+[Play free](https://orbital-foundry-game.onrender.com/?lang=en&utm_source=github&utm_medium=readme) · [Explore the account-free demo](https://orbital-foundry-game.onrender.com/demo?lang=en) · [Game overview & press information](https://orbital-foundry-game.onrender.com/discover.html)
+
+Build colonies, research technologies and command fleets. Try cargo missions, scouting, timed attacks and six clearly identified NPC factions. This small indie alpha is looking for early players and constructive feedback — it is not a finished, large-scale competitive MMO. A free account is required for saved gameplay; the demo is a read-only tour. Free hosting can mean a slow first load.
+
+![Orbital Foundry space battle](public/assets/login-battle-v1.webp)
+
+Found a problem or an idea? [Tell us in the project issues](https://github.com/Freddy3214/Orbital2/issues). Share the game only where community rules permit it; no fake player counts, unsolicited mass messages or paid promotion.
+
 Ein eigenständiger Browser-MMO-Prototyp im Stil klassischer Weltraum-Aufbaustrategie. Er übernimmt nur das Genre-Prinzip - nicht Namen, Texte, Grafiken oder Code von *Space Pioneers*.
 
 ## Starten
