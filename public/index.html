@@ -4,11 +4,45 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#081018" />
-    <title>Orbital Foundry</title>
+    <title>Orbital Foundry – Kostenloses Weltraum-Strategiespiel</title>
+    <meta name="description" content="Baue Kolonien, erforsche Technologien und kommandiere Flotten. Kostenloses Browser-Weltraumspiel in früher Alpha. Demo ohne Registrierung ansehen." />
+    <link rel="canonical" href="https://orbital-foundry-game.onrender.com/" />
+    <link rel="alternate" hreflang="de" href="https://orbital-foundry-game.onrender.com/" />
+    <link rel="alternate" hreflang="en" href="https://orbital-foundry-game.onrender.com/discover.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Orbital Foundry" />
+    <meta property="og:title" content="Orbital Foundry — Build your space empire" />
+    <meta property="og:description" content="Free browser space-strategy alpha. Colonize planets, research technologies and command fleets. Explore the demo without an account." />
+    <meta property="og:url" content="https://orbital-foundry-game.onrender.com/" />
+    <meta property="og:image" content="https://orbital-foundry-game.onrender.com/assets/login-battle-v1.webp" />
+    <meta property="og:image:alt" content="Orbital Foundry spacecraft above a planet during a space battle" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Orbital Foundry — Free browser space strategy" />
+    <meta name="twitter:description" content="An early space-strategy alpha. Build colonies, research and launch fleets. No download." />
+    <meta name="twitter:image" content="https://orbital-foundry-game.onrender.com/assets/login-battle-v1.webp" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "VideoGame",
+        "name": "Orbital Foundry",
+        "description": "A free browser space-strategy alpha about colonies, technologies and fleets.",
+        "url": "https://orbital-foundry-game.onrender.com/",
+        "image": "https://orbital-foundry-game.onrender.com/assets/login-battle-v1.webp",
+        "genre": ["Strategy", "Science fiction", "Browser game"],
+        "gamePlatform": "Web browser",
+        "applicationCategory": "Game",
+        "operatingSystem": "Any modern desktop browser",
+        "inLanguage": ["de", "en"],
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+        "author": { "@type": "Organization", "name": "Orbital Foundry" },
+        "sameAs": "https://github.com/Freddy3214/Orbital2"
+      }
+    </script>
     <link rel="stylesheet" href="/styles.css?v=20261005-no-embed" />
     <link rel="stylesheet" href="/galaxy.css" />
     <link rel="stylesheet" href="/classic.css?v=8" />
-    <link rel="stylesheet" href="/sand.css?v=20261006-combat-report-2" />
+    <link rel="stylesheet" href="/sand.css?v=20261009-npcs-1" />
     <link rel="stylesheet" href="/themes.css?v=20261003" />
   </head>
   <body>
@@ -38,7 +72,6 @@
           <button data-view="buildings"><span>▦</span> Infrastruktur</button>
           <button data-view="economy"><span>◈</span> Wirtschaft</button>
           <button data-view="research"><span>⌬</span> Forschung</button>
-          <button data-view="career"><span>★</span> Karriere</button>
           <button data-view="shipyard"><span>➤</span> Werft</button>
           <button data-view="defense"><span>⌁</span> Verteidigung</button>
           <button data-view="galaxy"><span>✦</span> Sonnensystem</button>
@@ -80,9 +113,12 @@
         <small id="auth-note">Passwörter werden nicht im Browser gespeichert. Der Server speichert nur einen sicheren Prüfwert.</small>
         <a class="gate-music-link" href="https://www.youtube.com/watch?v=8_5lauY-XzQ" target="_blank" rel="noopener noreferrer" aria-label="No Ress today auf YouTube öffnen">♫ No Ress today · auf YouTube hören ↗</a>
         <a class="gate-demo-link" href="/demo">Spiel ansehen · ohne Account →</a>
+        <a class="gate-demo-link" href="/discover.html" lang="en">About the game · English</a>
+        <button type="button" class="secondary-button" data-share-game>Spiel teilen · Freunde einladen</button>
+        <small data-share-status role="status" aria-live="polite"></small>
       </section>
     </div>
-    <script type="module" src="/app.js?v=20261006-combat-report-2"></script>
+    <script type="module" src="/app.js?v=20261009-npcs-1"></script>
+    <script type="module" src="/promo.js?v=20261017"></script>
   </body>
 </html>
-
