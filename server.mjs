@@ -78,6 +78,7 @@ const defaultState = (commander, position) => {
     usedFields: Object.values(buildings).reduce((sum, level) => sum + level, 0), coordinates: `X ${position.x.toFixed(1)} · Y ${position.y.toFixed(1)}`, position, colonizedAt: now, homeworld: true,
     buildings, resources, productionLoad: { metal: 100, crystal: 100, tritium: 100 }, buildingQueue: [], shipQueue: null, defenses: {},
   }],
+  career: { path: null, warXp: 0, tradeXp: 0 },
   queues: { building: [], research: null, ship: null }, missions: [], pvpFlights: [], incomingFlights: [], spyReports: [], combatReports: [], messages: [], notifications: [],
   log: [{ at: now, type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
   });
@@ -332,6 +333,11 @@ async function createAccount(key, account) {
 async function updateAccountState(key, state) {
   const previous = await accountByKey(key);
   if (asWholeNumber(state.revision) !== asWholeNumber(previous.state.revision)) fail("Der Spielstand hat sich geändert. Bitte synchronisieren.", 409);
+  state.career = {
+    path: ["trader", "warrior"].includes(state.career?.path) ? state.career.path : (previous.state.career?.path || null),
+    warXp: Math.max(asWholeNumber(previous.state.career?.warXp), asWholeNumber(state.career?.warXp)),
+    tradeXp: Math.max(asWholeNumber(previous.state.career?.tradeXp), asWholeNumber(state.career?.tradeXp)),
+  };
   state.buildBoostUntil = previous.state.buildBoostUntil || 0;
   state.buildBoostFrom = previous.state.buildBoostFrom || 0;
   state.spyReports = previous.state.spyReports || [];
@@ -697,7 +703,8 @@ function spyReportFor(attacker, defender, probeCount) {
 }
 function prepareRaid(attacker, defender, rawFleet) {
   const fleet = Object.fromEntries(Object.keys(FLEET).map(key=>[key,asWholeNumber(rawFleet?.[key])]));
-  const attackerAvionics = asWholeNumber(attacker.state.research?.avionics);
+  const isWarrior = attacker.state.career?.path === "warrior";
+  const attackerAvionics = asWholeNumber(attacker.state.research?.avionics) + (isWarrior ? 2 : 0);
   const defenderAvionics = asWholeNumber(defender.state.research?.avionics);
   const defenderShips = Object.fromEntries(Object.keys(FLEET).map(key=>[key,asWholeNumber(defender.state.ships?.[key])]));
   const defenderBuildings = primaryPlanet(defender).buildings || defender.state.buildings || {};
@@ -706,8 +713,17 @@ function prepareRaid(attacker, defender, rawFleet) {
   const combatBonuses = { attackerAvionics, defenderAvionics, commandCenter:asWholeNumber(defenderBuildings.commandCenter), shipyard:asWholeNumber(defenderBuildings.shipyard) };
   const { attackPower, defensePower, won, capacity, losses, defenderShipLosses, defenseLosses, survivors } = simulateBattle({ attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, ...combatBonuses });
   const loot = { metal: 0, crystal: 0, tritium: 0 };
+  const effectiveCapacity = isWarrior ? Math.floor(capacity * 1.2) : capacity;
+  const salvage = { metal: 0, crystal: 0 };
+  for (const [key, count] of Object.entries(defenderShipLosses)) {
+    salvage.metal += Math.floor((FLEET[key]?.cost?.metal || 0) * count * (isWarrior ? 0.3 : 0.15));
+    salvage.crystal += Math.floor((FLEET[key]?.cost?.crystal || 0) * count * (isWarrior ? 0.3 : 0.15));
+  }
+  const gainedWarXp = Object.values(defenderShipLosses).reduce((a, b) => a + b * 15, 0) + Object.values(defenseLosses).reduce((a, b) => a + b * 10, 0);
+  attacker.state.career ??= { path: null, warXp: 0, tradeXp: 0 };
+  attacker.state.career.warXp = asWholeNumber(attacker.state.career.warXp) + gainedWarXp;
   if (won) {
-    let remainingCapacity = capacity;
+    let remainingCapacity = effectiveCapacity;
     for (const resource of RESOURCE_KEYS) {
       const stock = primaryPlanet(defender).resources || defender.state.resources;
       const available = asWholeNumber(stock[resource]);
@@ -716,6 +732,8 @@ function prepareRaid(attacker, defender, rawFleet) {
       remainingCapacity -= amount;
       stock[resource] = available - amount;
     }
+    loot.metal += salvage.metal;
+    loot.crystal += salvage.crystal;
   }
   for (const key of Object.keys(FLEET)) {
     defender.state.ships[key] = Math.max(0, asWholeNumber(defender.state.ships[key]) - defenderShipLosses[key]);
@@ -1307,6 +1325,41 @@ const server = createServer(async (request, response) => {
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const body = await readBody(request);
       return json(response, 200, await mutate(() => colonizeSite(current.key, String(body.targetId || ""))));
+    }
+    if (request.method === "POST" && url.pathname === "/api/flights/recall") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const body = await readBody(request);
+      const flightId = String(body.flightId || "");
+      const result = await mutate(async () => {
+        const attacker = await accountByKey(current.key);
+        const flight = (attacker.state.pvpFlights || []).find(f => f.id === flightId);
+        if (!flight || flight.phase !== "outgoing") fail("Flotte kann nicht mehr zurückgerufen werden.", 400);
+        const now = Date.now();
+        const elapsed = Math.max(5000, now - flight.departedAt);
+        flight.phase = "returning";
+        flight.arrivesAt = now;
+        flight.returnAt = now + elapsed;
+        flight.survivors = { ...flight.fleet };
+        flight.loot = { metal: 0, crystal: 0, tritium: 0 };
+        attacker.state.revision = asWholeNumber(attacker.state.revision) + 1;
+        addStateLog(attacker.state, "mission", `Flotte nach ${flight.targetName} wurde zurückgerufen.`);
+        const defender = await accountById(flight.defenderId);
+        if (defender) {
+          defender.state.incomingFlights = (defender.state.incomingFlights || []).filter(f => f.id !== flight.id);
+          defender.state.revision = asWholeNumber(defender.state.revision) + 1;
+          if (pool) await pool.query("UPDATE accounts SET state = $2::jsonb WHERE id = $1", [defender.id, JSON.stringify(defender.state)]);
+          else {
+            const database = await loadLocalDatabase();
+            const defKey = accountKey(defender.username);
+            if (database.accounts[defKey]) database.accounts[defKey].state = defender.state;
+            await saveLocalDatabase(database);
+          }
+        }
+        await persistAccountState(current.key, attacker.state);
+        return { state: attacker.state, flight };
+      });
+      return json(response, 200, result);
     }
     if (request.method === "POST" && ["/api/raids", "/api/spy"].includes(url.pathname)) {
       const current = await authenticatedAccount(request);
