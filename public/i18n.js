@@ -4,7 +4,8 @@ let protectedTexts = [];
 const originals = new WeakMap();
 const attributes = new WeakMap();
 const pairs = [
-["Kommando","Command"],["Karriere","Career"],["Karriere & Spezialisierung","Career & Specialization"],["Pfad der Händlergilde","Merchant Guild Path"],["Pfad der Kriegerkaste","Warrior Caste Path"],["Händlergilde wählen","Choose Merchant Guild"],["Kriegerkaste wählen","Choose Warrior Caste"],["✓ Aktive Spezialisierung","✓ Active specialization"],["⟲ Flotte zurückrufen","⟲ Recall fleet"],["stabil","stable"],["Galaxiekarte","Star map"],["SYSTEMSCAN","SYSTEM SCAN"],["KARTENRAUM","MAP AREA"],["zentrieren","center"],["sichtbaren Welten bei","visible worlds at"],["Erfordert","Requires"],["BEUTE:","LOOT:"],["Angriff","Attack"],["Kolonisierung","Colonization"],["Relais Kappa","Relay Kappa"],
+["Spiel teilen · Freunde einladen","Share the game · Invite friends"],["Einladungslink kopiert.","Invite link copied."],
+["Kommando","Command"],["stabil","stable"],["Galaxiekarte","Star map"],["SYSTEMSCAN","SYSTEM SCAN"],["KARTENRAUM","MAP AREA"],["zentrieren","center"],["sichtbaren Welten bei","visible worlds at"],["Erfordert","Requires"],["BEUTE:","LOOT:"],["Angriff","Attack"],["Kolonisierung","Colonization"],["Relais Kappa","Relay Kappa"],
 ["Ein stillgelegter Außenposten sendet ein schwaches Notsignal. Eine Frachtdrohne kann verwertbare Vorräte bergen.","A deserted outpost emits a faint distress signal. A cargo drone can salvage useful supplies."],
 ["Ein automatisches Bergbau-Relais ist außer Kontrolle. Die Sicherungssysteme sind noch aktiv.","An automated mining relay is out of control. Its security systems are still active."],
 ["Schrottsammler haben sich in einem Asteroidenfeld verschanzt. Ein Interzeptor ist empfehlenswert.","Scavengers have entrenched themselves in an asteroid field. An interceptor is recommended."],
@@ -107,9 +108,10 @@ export function applyLanguage(value,persist=false){
 }
 export async function initLanguage(){
  let saved=null;try{saved=localStorage.getItem("orbital-foundry-language");}catch{}
+ const preference=preferredLanguage(location.search,saved);
  let initial=navigator.language.toLowerCase().startsWith("de")?"de":"en";
- if(!saved)try{const response=await fetch("/api/locale",{credentials:"same-origin",cache:"no-store"});if(response.ok)initial=(await response.json()).language;}catch{}
- applyLanguage(saved||initial);
+ if(!preference)try{const response=await fetch("/api/locale",{credentials:"same-origin",cache:"no-store"});if(response.ok)initial=(await response.json()).language;}catch{}
+ applyLanguage(preference||initial);
  for(const control of document.querySelectorAll("[data-language-switch]"))control.addEventListener("change",event=>applyLanguage(event.target.value,true));
  let scheduled=false;
  new MutationObserver(records=>{
@@ -117,5 +119,8 @@ export async function initLanguage(){
   scheduled=true;queueMicrotask(()=>{scheduled=false;translateDOM();});
  }).observe(document.body,{subtree:true,childList:true,characterData:true});
 }
-
+export function preferredLanguage(search,saved){
+ const requested=new URLSearchParams(search).get('lang');
+ return ['de','en'].includes(requested)?requested:['de','en'].includes(saved)?saved:null;
+}
 
