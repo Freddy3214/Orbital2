@@ -732,8 +732,10 @@ function prepareRaid(attacker, defender, rawFleet) {
       remainingCapacity -= amount;
       stock[resource] = available - amount;
     }
-    loot.metal += salvage.metal;
-    loot.crystal += salvage.crystal;
+    if (isWarrior) {
+      loot.metal += salvage.metal;
+      loot.crystal += salvage.crystal;
+    }
   }
   for (const key of Object.keys(FLEET)) {
     defender.state.ships[key] = Math.max(0, asWholeNumber(defender.state.ships[key]) - defenderShipLosses[key]);
