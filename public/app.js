@@ -276,12 +276,12 @@ let messageBody = "";
 let canGrantTestResources = false;
 
 const PLANET_TYPES = {
-  temperate: { name: "Gemäßigte Welt", terrain: "Grünland, Meere und Gebirgsketten", position: "0% 0%", accent: "cyan" },
-  arid: { name: "Aride Welt", terrain: "Staubmeere, Canyons und Erzadern", position: "50% 0%", accent: "amber" },
-  ocean: { name: "Ozeanwelt", terrain: "Inselketten und tiefe Wasserbecken", position: "100% 0%", accent: "blue" },
-  ice: { name: "Eiswelt", terrain: "Gletscherplatten und kryogene Risse", position: "0% 100%", accent: "ice" },
-  volcanic: { name: "Vulkanische Welt", terrain: "Lavaströme und Basaltfelder", position: "50% 100%", accent: "red" },
-  gas: { name: "Gasriese", terrain: "Sturmwirbel und Ammoniakbänder", position: "100% 100%", accent: "violet" },
+  temperate: { name: "Gemäßigte Welt", terrain: "Grünland, Meere und Gebirgsketten (+5 % alle Erträge)", position: "0% 0%", accent: "cyan", bonus: { metal: 1.05, crystal: 1.05, tritium: 1.05, solar: 1.05 } },
+  arid: { name: "Aride Welt", terrain: "Staubmeere, Canyons und Erzadern (+15 % Kristall & Solar)", position: "50% 0%", accent: "amber", bonus: { metal: 1.0, crystal: 1.15, tritium: 0.9, solar: 1.15 } },
+  ocean: { name: "Ozeanwelt", terrain: "Inselketten und tiefe Wasserbecken (+15 % Tritium, +5 % Kristall)", position: "100% 0%", accent: "blue", bonus: { metal: 0.95, crystal: 1.05, tritium: 1.15, solar: 1.0 } },
+  ice: { name: "Eiswelt", terrain: "Gletscherplatten und kryogene Risse (+25 % Tritium, −15 % Solar)", position: "0% 100%", accent: "ice", bonus: { metal: 1.0, crystal: 1.0, tritium: 1.25, solar: 0.85 } },
+  volcanic: { name: "Vulkanische Welt", terrain: "Lavaströme und Basaltfelder (+20 % Metall, +25 % Solar)", position: "50% 100%", accent: "red", bonus: { metal: 1.2, crystal: 0.95, tritium: 0.8, solar: 1.25 } },
+  gas: { name: "Gasriese", terrain: "Sturmwirbel und Ammoniakbänder (+30 % Tritium)", position: "100% 100%", accent: "violet", bonus: { metal: 0.85, crystal: 0.95, tritium: 1.3, solar: 0.9 } },
 };
 
 function requirement(ok, text) { return { ok, text }; }
@@ -382,6 +382,7 @@ function ensureStateShape() {
   state.incomingFlights = Array.isArray(state.incomingFlights) ? state.incomingFlights : [];
   state.messages ??= [];
   state.notifications ??= [];
+  state.career ??= { path: null, warXp: 0, tradeXp: 0 };
   state.readReports ??= [];
   state.archivedReports = Array.isArray(state.archivedReports) ? state.archivedReports : [];
   for (const key of Object.keys(state.research || {})) state.research[key] = Math.max(0, Math.min(LEVEL_CAP, Math.floor(Number(state.research[key]) || 0)));
@@ -500,14 +501,18 @@ function metalOutput(level) { return Math.floor(30 * level * 1.1 ** level) + 30;
 function crystalOutput(level) { return Math.floor(20 * level * 1.1 ** level) + 15; }
 function tritiumOutput(level) { return Math.floor(10 * level * 1.1 ** level); }
 function energySupply(level) { return Math.floor(20 * level * 1.1 ** level); }
-function storageCap(resource, level = planetBuildings()[`${resource}Storage`]) { return Math.floor(25000 * 1.65 ** level * (1 + (state.research.storageTech || 0) * .1)); }
+function storageCap(resource, level = planetBuildings()[`${resource}Storage`]) {
+  const careerBoost = state.career?.path === "trader" ? 1.25 : 1;
+  return Math.floor(25000 * 1.65 ** level * (1 + (state.research.storageTech || 0) * .1) * careerBoost);
+}
 function productionLoad(planet = activePlanet(), resource) {
   const value = Number(planet?.productionLoad?.[resource]);
   return Number.isFinite(value) ? Math.max(0, Math.min(100, Math.floor(value / 10) * 10)) : 100;
 }
 function energyStats(planet = activePlanet()) {
   const b = planetBuildings(planet);
-  const supply = energySupply(b.solarPlant) * (1 + state.research.energyTech * .05);
+  const biomeSolar = (PLANET_TYPES[planet?.type] || PLANET_TYPES.temperate).bonus?.solar || 1;
+  const supply = Math.floor(energySupply(b.solarPlant) * (1 + state.research.energyTech * .05) * biomeSolar);
   const demand = Math.floor(10 * b.metalMine * 1.1 ** b.metalMine * productionLoad(planet, "metal") / 100)
     + Math.floor(10 * b.crystalMine * 1.1 ** b.crystalMine * productionLoad(planet, "crystal") / 100)
     + Math.floor(20 * b.tritiumSynthesizer * 1.1 ** b.tritiumSynthesizer * productionLoad(planet, "tritium") / 100);
@@ -517,11 +522,13 @@ function energyStats(planet = activePlanet()) {
 function production(planet = activePlanet(), at = Date.now()) {
   const b = planetBuildings(planet);
   const efficiency = energyStats(planet).efficiency;
-  const plasma = 1 + state.research.plasmaTheory * .03;
+  const biome = (PLANET_TYPES[planet?.type] || PLANET_TYPES.temperate).bonus || { metal: 1, crystal: 1, tritium: 1 };
+  const traderBoost = state.career?.path === "trader" ? 1.15 : 1;
+  const plasma = (1 + state.research.plasmaTheory * .03) * traderBoost;
   return {
-    metal: metalOutput(b.metalMine) * productionLoad(planet, "metal") / 100 * efficiency * plasma * worldSpeedAt(at),
-    crystal: crystalOutput(b.crystalMine) * productionLoad(planet, "crystal") / 100 * efficiency * plasma * worldSpeedAt(at),
-    tritium: tritiumOutput(b.tritiumSynthesizer) * productionLoad(planet, "tritium") / 100 * efficiency * plasma * worldSpeedAt(at),
+    metal: metalOutput(b.metalMine) * biome.metal * productionLoad(planet, "metal") / 100 * efficiency * plasma * worldSpeedAt(at),
+    crystal: crystalOutput(b.crystalMine) * biome.crystal * productionLoad(planet, "crystal") / 100 * efficiency * plasma * worldSpeedAt(at),
+    tritium: tritiumOutput(b.tritiumSynthesizer) * biome.tritium * productionLoad(planet, "tritium") / 100 * efficiency * plasma * worldSpeedAt(at),
   };
 }
 function playerScore() {
@@ -1088,7 +1095,9 @@ function missionStatusMarkup() {
     const destinationName = destination?.name || MISSIONS[mission.targetId]?.name || mission.targetName || mission.targetId;
     const routeProgress = outboundDone ? 100 - returnProgress : outboundProgress;
     const route = `<div class="flight-route ${outboundDone ? "returning" : ""}"><span>${escapeHtml(sourceName)}</span><div class="flight-route-track"><i style="left:${routeProgress}%">${outboundDone ? "◀" : "▶"}</i></div><span>${escapeHtml(destinationName)}</span></div><div class="flight-manifest"><span class="flight-phase">${outboundDone ? "RÜCKKEHR" : mission.kind === "transport" ? "TRANSPORT" : mission.kind === "spy" ? "SPIONAGE" : mission.kind === "raid" ? "ANGRIFF" : "EXPEDITION"}</span>${Object.entries(mission.cargo || mission.loot || {}).filter(([key,count])=>RESOURCE_LABELS[key] && count>0).map(([key,count])=>`<span>${RESOURCE_LABELS[key]}: ${formatNumber(count)}</span>`).join("")}</div>`;
-    return `<section class="fleet-operation"><div class="fleet-operation-head"><div><strong>${escapeHtml(target.name)}</strong><span>${escapeHtml(target.coordinates || "")}</span></div><small>${escapeHtml(fleet || "Flottenverband")}</small></div>${route}<div class="queue-row ${outboundDone ? "completed-leg" : ""}"><div class="queue-top"><strong>Hinflug <span>· ${outboundDone ? "angekommen" : "unterwegs"}</span></strong><span>${outboundDone ? `Ankunft ${formatClock(mission.arrivesAt)}` : `${formatDuration(mission.arrivesAt - now)} · ${formatClock(mission.arrivesAt)}`}</span></div><div class="progress"><i style="width:${outboundProgress}%"></i></div></div><div class="queue-row return-leg ${outboundDone ? "active-return" : "waiting"}"><div class="queue-top"><strong>Rückflug <span>· ${outboundDone ? "unterwegs" : "geplant"}</span></strong><span>${outboundDone ? `${formatDuration(returnAt - now)} · ${formatClock(returnAt)}` : `Rückkehr ca. ${formatClock(returnAt)}`}</span></div><div class="progress"><i style="width:${returnProgress}%"></i></div></div></section>`;
+    const canRecall = !outboundDone && (mission.attackerId || mission.id);
+    const recallBtn = canRecall ? `<button class="secondary-button" data-recall-flight="${escapeHtml(mission.id)}" data-recall-pvp="${Boolean(mission.attackerId)}">⟲ Flotte zurückrufen</button>` : "";
+    return `<section class="fleet-operation"><div class="fleet-operation-head"><div><strong>${escapeHtml(target.name)}</strong><span>${escapeHtml(target.coordinates || "")}</span></div><small>${escapeHtml(fleet || "Flottenverband")}</small></div>${route}<div class="queue-row ${outboundDone ? "completed-leg" : ""}"><div class="queue-top"><strong>Hinflug <span>· ${outboundDone ? "angekommen" : "unterwegs"}</span></strong><span>${outboundDone ? `Ankunft ${formatClock(mission.arrivesAt)}` : `${formatDuration(mission.arrivesAt - now)} · ${formatClock(mission.arrivesAt)}`}</span></div><div class="progress"><i style="width:${outboundProgress}%"></i></div>${recallBtn}</div><div class="queue-row return-leg ${outboundDone ? "active-return" : "waiting"}"><div class="queue-top"><strong>Rückflug <span>· ${outboundDone ? "unterwegs" : "geplant"}</span></strong><span>${outboundDone ? `${formatDuration(returnAt - now)} · ${formatClock(returnAt)}` : `Rückkehr ca. ${formatClock(returnAt)}`}</span></div><div class="progress"><i style="width:${returnProgress}%"></i></div></div></section>`;
   }).join("")}</div>`;
 }
 function currentReport(id) {
@@ -1149,6 +1158,44 @@ function economyView() {
   worlds.push(`<tr><th>Gesamtes Imperium</th><td>—</td><td>—</td>${Object.keys(RESOURCE_LABELS).map(key => `<th>${formatNumber(totals[key])} / ${formatNumber(totals[key] * 24)}</th>`).join("")}<td>Stunde / Tag</td></tr>`);
   return controls + detail + `<p class="view-note">Prognose bei unveränderter Energieversorgung, ohne neue Aufträge oder Konvois. Volle Lager stoppen die weitere Einlagerung; vorhandene Vorräte bleiben erhalten.</p>` + tablePanel("Planetenvergleich", ["Welt", "Effizienz", "Energie + / −", "Metall h / Tag", "Kristall h / Tag", "Tritium h / Tag", "Lagerstatus"], worlds) + `<p class="view-note">Angezeigt wird die mögliche Produktion; bei vollen Lagern wird nichts mehr eingelagert. Konvois transportieren Vorräte zwischen eigenen Welten.</p>`;
 }
+function careerView() {
+  const currentPath = state.career?.path || null;
+  const tradeXp = (state.career?.tradeXp || 0) + state.planets.flatMap(p => Object.values(planetBuildings(p))).reduce((s, lvl) => s + lvl * 25, 0);
+  const warXp = (state.career?.warXp || 0) + (state.combatReports || []).filter(r => r.side === "attacker" && r.won).length * 100;
+  const tradeRank = Math.min(10, Math.floor(Math.sqrt(tradeXp / 50)));
+  const warRank = Math.min(10, Math.floor(Math.sqrt(warXp / 50)));
+  return `<section class="view-heading"><div><span class="eyebrow">SPACE-PIONEERS-TRADITION</span><h1>Karriere & Spezialisierung</h1><p>Wähle die Ausrichtung deines Imperiums. Wie im Klassiker Space Pioneers bestimmt deine Laufbahn, ob deine Kolonien durch Hochleistungs-Logistik oder durch Flottenüberlegenheit und Trümmerfeld-Bergung dominieren.</p></div><span class="sector-label">${currentPath === "trader" ? "HÄNDLERGILDE" : currentPath === "warrior" ? "KRIEGERKASTE" : "UNENTSCHIEDEN"}</span></section>
+  <div class="grid two-column">
+    <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>◈ Pfad der Händlergilde</h2><span>RANG ${tradeRank} · ${formatNumber(tradeXp)} EP</span></div>
+      <p>Fokus auf friedliche Expansion, planetare Spezialisierung und Konvoi-Logistik zwischen deinen Welten.</p>
+      <div class="stat-list" style="margin:14px 0">
+        <div class="stat-line"><span>Minen- & Synthese-Ertrag</span><strong class="positive">+15 % auf allen Welten</strong></div>
+        <div class="stat-line"><span>Lagerkapazität</span><strong class="positive">+25 % Speichervolumen</strong></div>
+        <div class="stat-line"><span>Konvoi-Antrieb</span><strong class="positive">+20 % schnellere Transporter</strong></div>
+      </div>
+      <button class="${currentPath === "trader" ? "secondary-button" : "primary-button"}" data-select-career="trader" ${currentPath === "trader" ? "disabled" : ""}>${currentPath === "trader" ? "✓ Aktive Spezialisierung" : "Händlergilde wählen"}</button>
+    </div></section>
+    <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>⚔ Pfad der Kriegerkaste</h2><span>RANG ${warRank} · ${formatNumber(warXp)} EP</span></div>
+      <p>Fokus auf taktische Raubzüge, Orbitalschlachten und die direkte Verwertung abgeschossener Feindflotten im Trümmerfeld.</p>
+      <div class="stat-list" style="margin:14px 0">
+        <div class="stat-line"><span>Waffen- & Zielsysteme</span><strong class="positive">+2 effektive Avionik-Stufen</strong></div>
+        <div class="stat-line"><span>Beutefrachtraum bei Raids</span><strong class="positive">+20 % Plünderungskapazität</strong></div>
+        <div class="stat-line"><span>Trümmerfeld-Recycler</span><strong class="positive">30 % Schrott-Bergung nach Sieg</strong></div>
+      </div>
+      <button class="${currentPath === "warrior" ? "secondary-button" : "primary-button"}" data-select-career="warrior" ${currentPath === "warrior" ? "disabled" : ""}>${currentPath === "warrior" ? "✓ Aktive Spezialisierung" : "Kriegerkaste wählen"}</button>
+    </div></section>
+  </div>
+  <section class="panel" style="margin-top:15px"><div class="panel-inner"><div class="panel-title"><h2>Planetare Biom-Modifikatoren</h2><span>AKTIVE WELT: ${escapeHtml(activePlanet().classification)}</span></div>
+    <p>Jede Weltklasse besitzt eigene geologische Vor- und Nachteile bei der Rohstoffförderung:</p>
+    <div class="stat-list">
+      <div class="stat-line"><span>Vulkanische Welt</span><strong>+20 % Metall · +25 % Solar · −20 % Tritium</strong></div>
+      <div class="stat-line"><span>Eiswelt</span><strong>+25 % Tritium · −15 % Solar</strong></div>
+      <div class="stat-line"><span>Aride Welt / Wüstenwelt</span><strong>+15 % Kristall · +15 % Solar · −10 % Tritium</strong></div>
+      <div class="stat-line"><span>Ozeanwelt</span><strong>+15 % Tritium · +5 % Kristall · −5 % Metall</strong></div>
+      <div class="stat-line"><span>Gemäßigte Welt</span><strong>+5 % auf Metall, Kristall, Tritium und Solar</strong></div>
+    </div>
+  </div></section>`;
+}
 function statisticsView() {
   const categories = [["Gebäude", state.planets.flatMap((planet) => Object.values(planetBuildings(planet))).reduce((s,n)=>s+n*n*12,0)], ["Forschung", Object.values(state.research).reduce((s,n)=>s+n*n*12,0)], ["Flotte", Object.values(state.ships).reduce((s,n)=>s+n*4,0)], ["Gesamt", playerScore()]];
   return tablePanel("Spielerstatistik", ["Bereich", "Punkte"], categories.map(([name,value]) => `<tr><td>${name}</td><td>${formatNumber(value)}</td></tr>`));
@@ -1166,7 +1213,8 @@ function transferPlan() {
 }
 function transferDuration(distance) {
   const speed = worldSpeedAt();
-  return Math.max(speed === 1 ? 45_000 : 30_000, Math.round((50_000 + distance * 18_000) / ((1 + (state.research.combustionDrive || 0) * .12) * speed)));
+  const traderSpeed = state.career?.path === "trader" ? 1.2 : 1;
+  return Math.max(speed === 1 ? 45_000 : 30_000, Math.round((50_000 + distance * 18_000) / ((1 + (state.research.combustionDrive || 0) * .12) * speed * traderSpeed)));
 }
 function transferProblem(step = 3) {
   const plan = transferPlan();
@@ -1515,7 +1563,7 @@ function render() {
   $(".planet-card .eyebrow").textContent = activePlanet().homeworld ? "HEIMATWELT" : "KOLONIE";
   $(".planet-card span:not(.eyebrow)").textContent = activePlanet().coordinates;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
-  const views = { overview: overviewView, buildings: buildingsView, research: researchView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, simulator: simulatorView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
+  const views = { overview: overviewView, buildings: buildingsView, research: researchView, career: careerView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, simulator: simulatorView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   content.innerHTML = (state.buildBoostUntil > Date.now() ? `<div class="boost-banner">⚡ Bauboost aktiv · ${formatDuration(state.buildBoostUntil - Date.now())} · 20× Tempo für Gebäude, Forschung und Schiffe</div>` : "") + views[activeView]();
   const messageField = content.querySelector('#message-compose textarea[name="body"]');
   if (messageField) messageField.value = messageBody;
@@ -1823,6 +1871,42 @@ content.addEventListener("click", (event) => {
   }
   if (button.dataset.cancelBuilding !== undefined) {
     cancelBuilding(Number(button.dataset.cancelBuilding));
+    return;
+  }
+  if (button.dataset.selectCareer) {
+    state.career ??= { path: null, warXp: 0, tradeXp: 0 };
+    state.career.path = button.dataset.selectCareer;
+    addLog("system", `Spezialisierung gewählt: ${state.career.path === "trader" ? "Händlergilde" : "Kriegerkaste"}.`);
+    toast(`Karrierepfad aktiviert: ${state.career.path === "trader" ? "Händlergilde" : "Kriegerkaste"}.`);
+    render(); save({ quiet: true }); return;
+  }
+  if (button.dataset.recallFlight) {
+    const flightId = button.dataset.recallFlight;
+    if (button.dataset.recallPvp === "true") {
+      actionBusy = true;
+      fetch("/api/flights/recall", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ flightId }) })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.error || "Rückruf fehlgeschlagen.");
+          state = data.state; ensureStateShape();
+          toast("Flotte wurde erfolgreich zurückgerufen.");
+          render();
+        })
+        .catch(err => toast(err.message, true))
+        .finally(() => { actionBusy = false; });
+    } else {
+      const mission = state.missions.find(m => m.id === flightId);
+      if (mission && mission.phase === "outgoing") {
+        const now = Date.now(), elapsed = Math.max(3000, now - mission.departedAt);
+        mission.phase = "returning";
+        mission.arrivesAt = now;
+        mission.returnAt = now + elapsed;
+        mission.returningFleet = mission.fleet;
+        addLog("mission", "Flotte wurde vorzeitig zurückgerufen.");
+        toast("Flotte dreht um und kehrt zur Startwelt zurück.");
+        render(); save({ quiet: true });
+      }
+    }
     return;
   }
   if (button.dataset.fleetFilter) { fleetStatusFilter = button.dataset.fleetFilter; render(); return; }
