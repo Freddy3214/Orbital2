@@ -733,8 +733,11 @@ function prepareRaid(attacker, defender, rawFleet) {
       stock[resource] = available - amount;
     }
     if (isWarrior) {
-      loot.metal += salvage.metal;
-      loot.crystal += salvage.crystal;
+      for (const resource of ["metal", "crystal"]) {
+        const recovered = Math.min(salvage[resource], remainingCapacity);
+        loot[resource] += recovered;
+        remainingCapacity -= recovered;
+      }
     }
   }
   for (const key of Object.keys(FLEET)) {

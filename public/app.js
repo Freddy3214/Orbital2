@@ -1164,9 +1164,10 @@ function careerView() {
   const warXp = (state.career?.warXp || 0) + (state.combatReports || []).filter(r => r.side === "attacker" && r.won).length * 100;
   const tradeRank = Math.min(10, Math.floor(Math.sqrt(tradeXp / 50)));
   const warRank = Math.min(10, Math.floor(Math.sqrt(warXp / 50)));
-  return `<section class="view-heading"><div><span class="eyebrow">SPACE-PIONEERS-TRADITION</span><h1>Karriere & Spezialisierung</h1><p>Wähle die Ausrichtung deines Imperiums. Wie im Klassiker Space Pioneers bestimmt deine Laufbahn, ob deine Kolonien durch Hochleistungs-Logistik oder durch Flottenüberlegenheit und Trümmerfeld-Bergung dominieren.</p></div><span class="sector-label">${currentPath === "trader" ? "HÄNDLERGILDE" : currentPath === "warrior" ? "KRIEGERKASTE" : "UNENTSCHIEDEN"}</span></section>
-  <div class="grid two-column">
-    <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>◈ Pfad der Händlergilde</h2><span>RANG ${tradeRank} · ${formatNumber(tradeXp)} EP</span></div>
+  return `<section class="view-heading"><div><span class="eyebrow">IMPERIALE LAUFBAHN</span><h1>Karriere & Spezialisierung</h1><p>Wähle die Ausrichtung deines Imperiums. Deine Laufbahn bestimmt, ob deine Kolonien durch Hochleistungs-Logistik oder durch Flottenüberlegenheit und Trümmerfeld-Bergung dominieren.</p></div><span class="sector-label">${currentPath === "trader" ? "HÄNDLERGILDE" : currentPath === "warrior" ? "KRIEGERKASTE" : "UNENTSCHIEDEN"}</span></section>
+  <div class="career-status" role="status"><strong>${currentPath ? "Aktive Klasse: " + (currentPath === "trader" ? "Händler" : "Krieger") : "Noch keine Klasse gewählt"}</strong><span>Die Boni gelten ab der gespeicherten Auswahl. Ränge zeigen deinen Fortschritt und gewähren keine zusätzlichen Boni.</span></div>
+  <div class="grid two-column career-grid">
+    <section class="panel career-card career-card--trader ${currentPath === "trader" ? "is-selected" : ""}"><div class="career-art"><img src="/assets/cargo-drone.svg" alt="Futuristischer Handelsfrachter" /><span>HANDEL · INDUSTRIE · LOGISTIK</span></div><div class="panel-inner"><div class="panel-title"><h2>◈ Pfad der Händlergilde</h2><span>RANG ${tradeRank} · ${formatNumber(tradeXp)} EP</span></div>
       <p>Fokus auf friedliche Expansion, planetare Spezialisierung und Konvoi-Logistik zwischen deinen Welten.</p>
       <div class="stat-list" style="margin:14px 0">
         <div class="stat-line"><span>Minen- & Synthese-Ertrag</span><strong class="positive">+15 % auf allen Welten</strong></div>
@@ -1175,12 +1176,12 @@ function careerView() {
       </div>
       <button class="${currentPath === "trader" ? "secondary-button" : "primary-button"}" data-select-career="trader" ${currentPath === "trader" ? "disabled" : ""}>${currentPath === "trader" ? "✓ Aktive Spezialisierung" : "Händlergilde wählen"}</button>
     </div></section>
-    <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>⚔ Pfad der Kriegerkaste</h2><span>RANG ${warRank} · ${formatNumber(warXp)} EP</span></div>
+    <section class="panel career-card career-card--warrior ${currentPath === "warrior" ? "is-selected" : ""}"><div class="career-art"><img src="/assets/interceptor.svg" alt="Futuristisches Kampfschiff" /><span>FLOTTE · TAKTIK · BERGUNG</span></div><div class="panel-inner"><div class="panel-title"><h2>⚔ Pfad der Kriegerkaste</h2><span>RANG ${warRank} · ${formatNumber(warXp)} EP</span></div>
       <p>Fokus auf taktische Raubzüge, Orbitalschlachten und die direkte Verwertung abgeschossener Feindflotten im Trümmerfeld.</p>
       <div class="stat-list" style="margin:14px 0">
         <div class="stat-line"><span>Waffen- & Zielsysteme</span><strong class="positive">+2 effektive Avionik-Stufen</strong></div>
         <div class="stat-line"><span>Beutefrachtraum bei Raids</span><strong class="positive">+20 % Plünderungskapazität</strong></div>
-        <div class="stat-line"><span>Trümmerfeld-Recycler</span><strong class="positive">30 % Schrott-Bergung nach Sieg</strong></div>
+        <div class="stat-line"><span>Trümmerfeld-Recycler</span><strong class="positive">30 % Metall/Kristall · freier Frachtraum</strong></div>
       </div>
       <button class="${currentPath === "warrior" ? "secondary-button" : "primary-button"}" data-select-career="warrior" ${currentPath === "warrior" ? "disabled" : ""}>${currentPath === "warrior" ? "✓ Aktive Spezialisierung" : "Kriegerkaste wählen"}</button>
     </div></section>
@@ -1874,11 +1875,22 @@ content.addEventListener("click", (event) => {
     return;
   }
   if (button.dataset.selectCareer) {
+    const path = button.dataset.selectCareer;
+    if (!["trader", "warrior"].includes(path) || state.career?.path === path) return;
+    if (isSaving || actionBusy) { toast("Bitte warte, bis die Speicherung abgeschlossen ist."); return; }
+    synchronize();
+    const previousPath = state.career?.path || null;
     state.career ??= { path: null, warXp: 0, tradeXp: 0 };
-    state.career.path = button.dataset.selectCareer;
-    addLog("system", `Spezialisierung gewählt: ${state.career.path === "trader" ? "Händlergilde" : "Kriegerkaste"}.`);
-    toast(`Karrierepfad aktiviert: ${state.career.path === "trader" ? "Händlergilde" : "Kriegerkaste"}.`);
-    render(); save({ quiet: true }); return;
+    state.career.path = path;
+    actionBusy = true;
+    save({ quiet: true }).then(saved => {
+      if (saved) toast(`Klasse gespeichert: ${path === "trader" ? "Händler" : "Krieger"}.`);
+      else {
+        if (state.career?.path === path) state.career.path = previousPath;
+        toast("Klassenwahl wurde nicht gespeichert. Bitte erneut versuchen.", true);
+      }
+    }).finally(() => { actionBusy = false; render(); });
+    return;
   }
   if (button.dataset.recallFlight) {
     const flightId = button.dataset.recallFlight;
