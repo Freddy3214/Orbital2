@@ -4,7 +4,8 @@ export const WORLD_SPEED = 10;
 export const SPEED_START_AT = Date.parse("2026-10-06T08:00:00Z");
 export function worldSpeedAt(at = Date.now()) { return at >= SPEED_START_AT ? WORLD_SPEED : 1; }
 export const FLEET = {
-  cargoDrone: { power:4, cargo:850 }, interceptor:{power:45,cargo:120},
+  cargoDrone: { power:4, cargo:850, cost:{metal:180,crystal:80,tritium:40} }, interceptor:{power:45,cargo:120,cost:{metal:270,crystal:160,tritium:80}},
+  recycler:{name:"Recycler",power:1,cargo:20000,level:4,minimumBuildTimeMs:600000,cost:{metal:3000,crystal:2000,tritium:800}},
   smallTransport:{name:"Kleiner Transporter",power:8,cargo:2500,level:2,minimumBuildTimeMs:120000,cost:{metal:450,crystal:220,tritium:60}},
   mediumTransport:{name:"Mittlerer Transporter",power:25,cargo:10000,level:4,minimumBuildTimeMs:360000,cost:{metal:1800,crystal:900,tritium:250}},
   largeTransport:{name:"Großer Transporter",power:70,cargo:40000,level:6,minimumBuildTimeMs:900000,cost:{metal:7200,crystal:3600,tritium:1000}},

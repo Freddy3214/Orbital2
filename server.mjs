@@ -338,6 +338,7 @@ async function updateAccountState(key, state) {
     warXp: Math.max(asWholeNumber(previous.state.career?.warXp), asWholeNumber(state.career?.warXp)),
     tradeXp: Math.max(asWholeNumber(previous.state.career?.tradeXp), asWholeNumber(state.career?.tradeXp)),
   };
+  state.debrisFields = previous.state.debrisFields || {};
   state.buildBoostUntil = previous.state.buildBoostUntil || 0;
   state.buildBoostFrom = previous.state.buildBoostFrom || 0;
   state.spyReports = previous.state.spyReports || [];
@@ -578,6 +579,7 @@ function publicGalaxyRecord(account, observer = null) {
     signature: String(planet.name || "Unbenannte Signatur").slice(0, 36),
     owner: String(account.username || "Unbekannt").slice(0, 36),
     own: account.id === observer?.id,
+    debris: account.state.debrisFields?.[planet.id] || { metal: 0, crystal: 0 },
     npc: Boolean(npcConfig(account)),
     npcTier: npcConfig(account)?.tier,
     npcPassive: Boolean(npcConfig(account)?.passive),
@@ -623,6 +625,7 @@ function galaxySystems(contacts, observer) {
           targetId: contact.id,
           name: contact.signature,
           owner: contact.free ? null : contact.owner,
+          debris: contact.debris || null,
           free: Boolean(contact.free),
           own: Boolean(contact.own), planetId: contact.planetId,
           npc: Boolean(contact.npc), npcTier: contact.npcTier, npcPassive: contact.npcPassive,
@@ -714,11 +717,16 @@ function prepareRaid(attacker, defender, rawFleet) {
   const { attackPower, defensePower, won, capacity, losses, defenderShipLosses, defenseLosses, survivors } = simulateBattle({ attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, ...combatBonuses });
   const loot = { metal: 0, crystal: 0, tritium: 0 };
   const effectiveCapacity = isWarrior ? Math.floor(capacity * 1.2) : capacity;
-  const salvage = { metal: 0, crystal: 0 };
-  for (const [key, count] of Object.entries(defenderShipLosses)) {
-    salvage.metal += Math.floor((FLEET[key]?.cost?.metal || 0) * count * (isWarrior ? 0.3 : 0.15));
-    salvage.crystal += Math.floor((FLEET[key]?.cost?.crystal || 0) * count * (isWarrior ? 0.3 : 0.15));
+  const debrisCreated = { metal: 0, crystal: 0 };
+  for (const key of Object.keys(FLEET)) {
+    const destroyed = asWholeNumber(losses[key]) + asWholeNumber(defenderShipLosses[key]);
+    for (const resource of ["metal", "crystal"])
+      debrisCreated[resource] += Math.floor((FLEET[key].cost?.[resource] || 0) * destroyed * .3);
   }
+  defender.state.debrisFields ??= {};
+  const debrisId = primaryPlanet(defender).id;
+  const debris = defender.state.debrisFields[debrisId] ??= { metal: 0, crystal: 0 };
+  for (const resource of ["metal", "crystal"]) debris[resource] = asWholeNumber(debris[resource]) + debrisCreated[resource];
   const gainedWarXp = Object.values(defenderShipLosses).reduce((a, b) => a + b * 15, 0) + Object.values(defenseLosses).reduce((a, b) => a + b * 10, 0);
   attacker.state.career ??= { path: null, warXp: 0, tradeXp: 0 };
   attacker.state.career.warXp = asWholeNumber(attacker.state.career.warXp) + gainedWarXp;
@@ -732,13 +740,7 @@ function prepareRaid(attacker, defender, rawFleet) {
       remainingCapacity -= amount;
       stock[resource] = available - amount;
     }
-    if (isWarrior) {
-      for (const resource of ["metal", "crystal"]) {
-        const recovered = Math.min(salvage[resource], remainingCapacity);
-        loot[resource] += recovered;
-        remainingCapacity -= recovered;
-      }
-    }
+
   }
   for (const key of Object.keys(FLEET)) {
     defender.state.ships[key] = Math.max(0, asWholeNumber(defender.state.ships[key]) - defenderShipLosses[key]);
@@ -764,7 +766,7 @@ function prepareRaid(attacker, defender, rawFleet) {
     : `${attacker.username} wurde abgefangen. Flottenverluste: ${defenderFleetLossText}.`, "high");
   const resolvedAt = Date.now();
   const combatId = `${attacker.id}-${defender.id}-${resolvedAt}-${randomBytes(3).toString("hex")}`;
-  const composition = { attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, combatBonuses };
+  const composition = { debrisCreated, targetId: signalId(defender), attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, combatBonuses };
   addCombatReport(attacker.state, { id: combatId, at: resolvedAt, side: "attacker", opponent: defender.username, won, loot, capacity, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, ...composition });
   addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, capacity, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, ...composition });
   return { won, fleet, survivors, loot, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, resolvedAt };
@@ -776,17 +778,23 @@ export function flightDuration(attacker, defender, spy, at = Date.now()) {
   const minimum = speed === 1 ? (spy ? 120000 : 240000) : (spy ? 60000 : 180000);
   return Math.round(Math.max(minimum, ((spy ? 180000 : 360000) + distance * 10000) / ((1 + drive * .12) * speed)));
 }
-function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, now = Date.now()) {
+function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, now = Date.now(), recycle = false) {
   normalizeAccount(attacker); normalizeAccount(defender);
   const targetPlanet = defender.state.planets.find(planet => planet.id === targetPlanetId);
   if (!targetPlanet) fail("Dieses Ziel ist nicht verfügbar.", 404);
   const origin = activeGalaxyAccount(attacker);
   const target = { ...defender, focusPlanet: targetPlanet };
   const report = knownSpyReport(attacker.state, signalId(target));
-  if (!npcConfig(attacker) && !targetIsVisible(origin, target) && !report) fail("Dieses Ziel ist nicht verfügbar.", 404);
+  if (attacker.id !== defender.id && !npcConfig(attacker) && !targetIsVisible(origin, target) && !report) fail("Dieses Ziel ist nicht verfügbar.", 404);
   if ((attacker.state.pvpFlights || []).length >= 20) fail("Maximal 20 PvP-Flüge gleichzeitig.", 409);
   let fleet;
-  if (spy) {
+  if (recycle) {
+    const count = Number(rawFleet?.recycler);
+    if (!Number.isSafeInteger(count) || count < 1 || count > 1000000) fail("Wähle eine gültige Anzahl Recycler.");
+    const field = defender.state.debrisFields?.[targetPlanetId];
+    if (!field || !(field.metal > 0 || field.crystal > 0)) fail("Hier liegt kein Trümmerfeld.");
+    fleet = { recycler: count };
+  } else if (spy) {
     const probes = Number(rawFleet?.probes);
     if (!Number.isInteger(probes) || probes < 1 || probes > 12) fail("Wähle 1 bis 12 Sonden.");
     if (now - Number(attacker.state.lastSpyAt || 0) < 15000) fail("Sondenkanal belegt. Bitte 15 Sekunden zwischen Scans warten.", 429);
@@ -802,23 +810,23 @@ function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, now 
   for (const [key, amount] of Object.entries(fleet)) attacker.state.ships[key] = asWholeNumber(attacker.state.ships[key]) - amount;
   const duration = npcConfig(attacker) ? Math.max(spy ? 5*60_000 : 15*60_000,flightDuration(origin,target,spy,now)) : flightDuration(origin, target, spy, now);
   const flight = {
-    id: randomBytes(12).toString("hex"), kind: spy ? "spy" : "raid", phase: "outgoing",
+    id: randomBytes(12).toString("hex"), kind: recycle ? "recycle" : spy ? "spy" : "raid", phase: "outgoing",
     attackerId: attacker.id, defenderId: defender.id, sourcePlanetId: primaryPlanet(origin).id,
     sourceName: primaryPlanet(origin).name, targetPlanetId, targetName: targetPlanet.name,
     attackerName: attacker.username, defenderName: defender.username, fleet, npc: Boolean(npcConfig(attacker)),
     departedAt: now, arrivesAt: now + duration, returnAt: now + duration * 2, duration,
   };
   attacker.state.pvpFlights = [...(attacker.state.pvpFlights || []), flight];
-  defender.state.incomingFlights = [...(defender.state.incomingFlights || []), {
+  if (!recycle) defender.state.incomingFlights = [...(defender.state.incomingFlights || []), {
     id: flight.id, kind: flight.kind, attackerName: attacker.username, targetPlanetId, npc: Boolean(npcConfig(attacker)),
     targetName: targetPlanet.name, arrivesAt: flight.arrivesAt, departedAt: now,
   }];
-  addStateLog(attacker.state, spy ? "scan" : "mission", `${spy ? "Sonden" : "Angriffsflotte"} unterwegs zu ${targetPlanet.name}. Ankunft ${new Date(flight.arrivesAt).toLocaleTimeString("de-DE")}.`);
+  addStateLog(attacker.state, spy ? "scan" : "mission", `${recycle ? "Bergungsflotte" : spy ? "Sonden" : "Angriffsflotte"} unterwegs zu ${targetPlanet.name}. Ankunft ${new Date(flight.arrivesAt).toLocaleTimeString("de-DE")}.`);
   attacker.state.revision = asWholeNumber(attacker.state.revision) + 1;
   defender.state.revision = asWholeNumber(defender.state.revision) + 1;
   return flight;
 }
-async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
+async function executeRaid(attackerKey, targetId, rawFleet, spy = false, recycle = false) {
   const separator = targetId.indexOf(":");
   if (separator < 0) fail("Bitte das Ziel erneut auf der Karte auswählen.");
   const defenderId = targetId.slice(0, separator), targetPlanetId = targetId.slice(separator + 1);
@@ -829,9 +837,9 @@ async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
       const result = await client.query("SELECT id, account_key, username, created_at, password_salt, password_hash, state FROM accounts WHERE account_key = $1 OR id = $2 ORDER BY id FOR UPDATE", [attackerKey, defenderId]);
       const attackerRow = result.rows.find(row => row.account_key === attackerKey);
       const defenderRow = result.rows.find(row => row.id === defenderId);
-      if (!attackerRow || !defenderRow || attackerRow.id === defenderRow.id) fail("Dieses Ziel ist nicht verfügbar.", 404);
-      const attacker = accountFromRow(attackerRow), defender = accountFromRow(defenderRow);
-      const flight = launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy);
+      if (!attackerRow || !defenderRow || (!recycle && attackerRow.id === defenderRow.id)) fail("Dieses Ziel ist nicht verfügbar.", 404);
+      const attacker = accountFromRow(attackerRow), defender = attackerRow.id === defenderRow.id ? attacker : accountFromRow(defenderRow);
+      const flight = launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, Date.now(), recycle);
       await client.query("UPDATE accounts SET state = $2::jsonb WHERE id = $1", [attacker.id, JSON.stringify(attacker.state)]);
       await client.query("UPDATE accounts SET state = $2::jsonb WHERE id = $1", [defender.id, JSON.stringify(defender.state)]);
       await client.query("COMMIT");
@@ -844,8 +852,8 @@ async function executeRaid(attackerKey, targetId, rawFleet, spy = false) {
   const database = await loadLocalDatabase();
   const attacker = database.accounts[attackerKey];
   const defender = Object.values(database.accounts).find(account => account.id === defenderId);
-  if (!attacker || !defender || attacker.id === defender.id) fail("Dieses Ziel ist nicht verfügbar.", 404);
-  const flight = launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy);
+  if (!attacker || !defender || (!recycle && attacker.id === defender.id)) fail("Dieses Ziel ist nicht verfügbar.", 404);
+  const flight = launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, Date.now(), recycle);
   await saveLocalDatabase(database);
   return { state: attacker.state, flight };
 }
@@ -858,7 +866,19 @@ function settlePvpFlight(attacker, defender, flightId, now) {
     const targetPlanet = defender.state.planets.find(planet => planet.id === flight.targetPlanetId);
     if (targetPlanet) {
       const target = { ...defender, focusPlanet: targetPlanet };
-      if (flight.kind === "spy") {
+      if (flight.kind === "recycle") {
+        const field = defender.state.debrisFields?.[targetPlanet.id];
+        let remaining = asWholeNumber(flight.fleet.recycler) * FLEET.recycler.cargo;
+        flight.survivors = { ...flight.fleet };
+        flight.loot = { metal: 0, crystal: 0, tritium: 0 };
+        for (const resource of ["metal", "crystal"]) {
+          const amount = Math.min(asWholeNumber(field?.[resource]), remaining);
+          flight.loot[resource] = amount;
+          if (field) field[resource] = asWholeNumber(field[resource]) - amount;
+          remaining -= amount;
+        }
+        addNotification(attacker.state, "combat", "Bergungsbericht", `Trümmerfeld bei ${targetPlanet.name}: ${flight.loot.metal} Metall und ${flight.loot.crystal} Kristall geborgen. Lieferung nach Rückkehr.`);
+      } else if (flight.kind === "spy") {
         const report = spyReportFor(attacker, target, flight.fleet.spyProbe);
         flight.survivors = { spyProbe: Math.max(0, flight.fleet.spyProbe - report.lost) };
       } else {
@@ -881,7 +901,7 @@ function settlePvpFlight(attacker, defender, flightId, now) {
     source.resources ??= { metal: 0, crystal: 0, tritium: 0, lastUpdate: now };
     for (const key of RESOURCE_KEYS) source.resources[key] = asWholeNumber(source.resources[key]) + asWholeNumber(flight.loot?.[key]);
     attacker.state.pvpFlights = attacker.state.pvpFlights.filter(item => item.id !== flight.id);
-    addStateLog(attacker.state, "mission", `${flight.kind === "spy" ? "Sonden" : "Angriffsflotte"} von ${flight.targetName} zurückgekehrt.`);
+    addStateLog(attacker.state, "mission", `${flight.kind === "recycle" ? "Bergungsflotte" : flight.kind === "spy" ? "Sonden" : "Angriffsflotte"} von ${flight.targetName} zurückgekehrt.`);
   } else return false;
   attacker.state.revision = asWholeNumber(attacker.state.revision) + 1;
   return true;
@@ -894,7 +914,7 @@ async function resolveOnePvpFlight(attackerId, defenderId, flightId, now) {
       const result = await client.query("SELECT id, account_key, username, created_at, password_salt, password_hash, state FROM accounts WHERE id = $1 OR id = $2 ORDER BY id FOR UPDATE", [attackerId, defenderId]);
       const attackerRow = result.rows.find(row => row.id === attackerId), defenderRow = result.rows.find(row => row.id === defenderId);
       if (!attackerRow || !defenderRow) { await client.query("ROLLBACK"); return; }
-      const attacker = accountFromRow(attackerRow), defender = accountFromRow(defenderRow);
+      const attacker = accountFromRow(attackerRow), defender = attackerRow.id === defenderRow.id ? attacker : accountFromRow(defenderRow);
       if (settlePvpFlight(attacker, defender, flightId, now)) {
         await client.query("UPDATE accounts SET state = $2::jsonb WHERE id = $1", [attackerId, JSON.stringify(attacker.state)]);
         await client.query("UPDATE accounts SET state = $2::jsonb WHERE id = $1", [defenderId, JSON.stringify(defender.state)]);
@@ -1366,13 +1386,13 @@ const server = createServer(async (request, response) => {
       });
       return json(response, 200, result);
     }
-    if (request.method === "POST" && ["/api/raids", "/api/spy"].includes(url.pathname)) {
+    if (request.method === "POST" && ["/api/raids", "/api/spy", "/api/recycle"].includes(url.pathname)) {
       const current = await authenticatedAccount(request);
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const body = await readBody(request);
       const targetId = String(body.targetId || "");
       const spy = url.pathname === "/api/spy";
-      const result = await mutate(() => executeRaid(current.key, targetId, spy ? { probes: body.probes } : body.fleet || {}, spy));
+      const result = await mutate(() => executeRaid(current.key, targetId, spy ? { probes: body.probes } : body.fleet || {}, spy, url.pathname === "/api/recycle"));
       return json(response, 200, result);
     }
     if (request.method === "GET") return await serveStatic(url.pathname === "/demo" ? "/" : url.pathname, request, response);

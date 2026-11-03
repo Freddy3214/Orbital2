@@ -203,6 +203,8 @@ test("winning raid takes ninety percent of arrival stock within surviving cargo 
   assert.equal(report.won, true);
   assert.deepEqual(report.loot, {metal:900,crystal:900,tritium:900});
   assert.equal(report.capacity, 3500);
+  assert.deepEqual(report.debrisCreated, {metal:360,crystal:195});
+  assert.deepEqual(defenderAfter.debrisFields[planet.id], report.debrisCreated);
   assert.equal(report.defenderFleet.frigate, 1);
   assert.equal(report.defenderShipLosses.frigate, 1);
   assert.equal(report.defenseLosses.rocketBattery, 1);
@@ -315,4 +317,53 @@ test("NPCs protect beginners, scout before attacking, show warnings, and keep pl
   await advanceNpcWorld(raid.arrivesAt+2);
   database = JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8"));
   assert.equal(database.accounts["!npc:npc-marauders"].state.pvpFlights.length,0,"six-hour cooldown is shared by all NPC factions");
+});
+
+test("debris persists, competing recyclers share finite stock, delivery waits for return", async () => {
+  const first=await api("/api/auth/register","POST",{username:"RecyclerOne",password:"secure1234"});
+  const second=await api("/api/auth/register","POST",{username:"RecyclerTwo",password:"secure1234"});
+  const victim=await api("/api/auth/register","POST",{username:"RecyclerTarget",password:"secure1234"});
+  let db=JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8"));
+  const p=db.accounts.recyclertarget.state.planets[0], targetId=db.accounts.recyclertarget.id+":"+p.id;
+  db.accounts.recyclertarget.state.debrisFields={[p.id]:{metal:30000,crystal:15000}};
+  for(const key of ["recyclerone","recyclertwo"]){
+    db.accounts[key].state.ships.recycler=2;
+    db.accounts[key].state.planets[0].position={...p.position};
+  }
+  await writeFile(process.env.ACCOUNT_FILE,JSON.stringify(db),"utf8");
+  const before=(await api("/api/state","GET",undefined,first.cookie)).payload.state;
+  const one=(await api("/api/recycle","POST",{targetId,fleet:{recycler:1}},first.cookie)).payload.flight;
+  const two=(await api("/api/recycle","POST",{targetId,fleet:{recycler:2}},second.cookie)).payload.flight;
+  assert.equal(one.kind,"recycle"); assert.ok(one.arrivesAt-one.departedAt>=180000);
+  const forged=(await api("/api/state","GET",undefined,victim.cookie)).payload.state;
+  forged.debrisFields[p.id]={metal:99999999,crystal:99999999};
+  await api("/api/state","PUT",{state:forged},victim.cookie);
+  assert.equal((await api("/api/state","GET",undefined,victim.cookie)).payload.state.debrisFields[p.id].metal,30000);
+  await resolveDuePvpFlights(Math.max(one.arrivesAt,two.arrivesAt)+1);
+  db=JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8"));
+  const f1=db.accounts.recyclerone.state.pvpFlights.find(f=>f.id===one.id);
+  const f2=db.accounts.recyclertwo.state.pvpFlights.find(f=>f.id===two.id);
+  assert.equal(f1.loot.metal+f1.loot.crystal,20000);
+  assert.equal(f2.loot.metal+f2.loot.crystal,25000);
+  assert.equal(db.accounts.recyclertarget.state.debrisFields[p.id].metal,0);
+  assert.equal(db.accounts.recyclertarget.state.debrisFields[p.id].crystal,0);
+  assert.equal(db.accounts.recyclerone.state.planets[0].resources.metal,before.planets[0].resources.metal);
+  await resolveDuePvpFlights(Math.max(f1.returnAt,f2.returnAt)+1);
+  db=JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8"));
+  assert.equal(db.accounts.recyclerone.state.ships.recycler,2);
+  assert.equal(db.accounts.recyclerone.state.planets[0].resources.metal,before.planets[0].resources.metal+f1.loot.metal);
+  // Empty fields reject new flights; own fields can be collected.
+  const response=await fetch(base+"/api/recycle",{method:"POST",headers:{"Content-Type":"application/json",Cookie:first.cookie},body:JSON.stringify({targetId,fleet:{recycler:1}})});
+  assert.equal(response.status,400);
+  db.accounts.recyclertarget.state.ships.recycler=1;
+  db.accounts.recyclertarget.state.debrisFields[p.id]={metal:400,crystal:200};
+  await writeFile(process.env.ACCOUNT_FILE,JSON.stringify(db),"utf8");
+  const own=(await api("/api/recycle","POST",{targetId,fleet:{recycler:1}},victim.cookie)).payload.flight;
+  await resolveDuePvpFlights(own.arrivesAt+1);
+  db=JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8"));
+  assert.equal(db.accounts.recyclertarget.state.debrisFields[p.id].metal,0);
+  const returning=db.accounts.recyclertarget.state.pvpFlights.find(f=>f.id===own.id);
+  await resolveDuePvpFlights(returning.returnAt+1);
+  db=JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8"));
+  assert.equal(db.accounts.recyclertarget.state.ships.recycler,1);
 });
