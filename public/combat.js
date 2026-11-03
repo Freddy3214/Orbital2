@@ -1,8 +1,8 @@
-import { FLEET, DEFENSE } from "./units.js";
+import { FLEET, DEFENSE, fleetCapacity } from "./units.js?v=20261103-cargo-fuel-1";
 
 const count = value => Math.max(0, Math.floor(Number(value) || 0));
 
-export function simulateBattle({ attackerFleet = {}, defenderFleet = {}, defenses = {}, attackerAvionics = 0, defenderAvionics = 0, commandCenter = 0, shipyard = 0 }) {
+export function simulateBattle({ attackerFleet = {}, defenderFleet = {}, defenses = {}, attackerAvionics = 0, defenderAvionics = 0, commandCenter = 0, shipyard = 0, attackerCareer = null }) {
   const fleet = Object.fromEntries(Object.keys(FLEET).map(key => [key, count(attackerFleet[key])]));
   const attackPower = Math.floor(Object.entries(FLEET).reduce((sum, [key, item]) => sum + fleet[key] * item.power, 0) * (1 + count(attackerAvionics) * .08));
   const base = Object.entries(FLEET).reduce((sum, [key, item]) => sum + count(defenderFleet[key]) * item.power, 0)
@@ -14,6 +14,6 @@ export function simulateBattle({ attackerFleet = {}, defenderFleet = {}, defense
   const losses = Object.fromEntries(Object.keys(FLEET).map(key => [key, fleet[key] - survivors[key]]));
   const defenderShipLosses = Object.fromEntries(Object.keys(FLEET).map(key => [key, won ? Math.ceil(count(defenderFleet[key]) * .35) : Math.floor(count(defenderFleet[key]) * .1)]));
   const defenseLosses = Object.fromEntries(Object.keys(DEFENSE).map(key => [key, won ? Math.ceil(count(defenses[key]) * .25) : 0]));
-  const capacity = Object.entries(FLEET).reduce((sum, [key, item]) => sum + survivors[key] * item.cargo, 0);
+  const capacity = fleetCapacity(survivors, attackerCareer, true);
   return { won, attackPower, defensePower, survivors, losses, defenderShipLosses, defenseLosses, capacity };
 }

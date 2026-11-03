@@ -213,7 +213,7 @@ test("winning raid takes ninety percent of arrival stock within surviving cargo 
   assert.deepEqual(defenderAfter.combatReports[0].loot, report.loot);
   await resolveDuePvpFlights(attackerAfter.pvpFlights[0].returnAt + 1);
   const returned = (await api("/api/state", "GET", undefined, attacker.cookie)).payload.state;
-  for (const resource of ["metal", "crystal", "tritium"]) assert.equal(returned.planets[0].resources[resource], 100900);
+  for (const resource of ["metal", "crystal", "tritium"]) assert.equal(returned.planets[0].resources[resource], 100900 - (resource === "tritium" ? flight.fuel : 0));
 });
 
 test("planet production settings persist in ten-percent steps", async () => {
@@ -387,4 +387,28 @@ test("daily rewards and skins are server-owned and claims cannot be repeated",as
  const skin=(await api("/api/progression/skin","POST",{skin:"aurora"},signup.cookie)).payload.state;
  assert.equal(skin.progression.skin,"aurora");
  for(const path of ["/manifest.webmanifest","/sw.js","/offline.html","/app-icon.svg"])assert.equal((await fetch(base+path)).status,200);
+});
+
+test("Tritium is quoted and charged once, insufficient fuel leaves ships unchanged, recall refunds no fuel",async()=>{
+ const signup=await api("/api/auth/register","POST",{username:"FuelCommander",password:"secure1234"});
+ const victim=await api("/api/auth/register","POST",{username:"FuelTarget",password:"secure1234"});
+ const state=signup.payload.state;state.ships.smallTransport=2;state.career={path:"warrior",warXp:0,tradeXp:0};
+ await api("/api/state","PUT",{state},signup.cookie);
+ const target=(await api("/api/galaxy","GET",undefined,signup.cookie)).payload.contacts.find(x=>x.owner==="FuelTarget");
+ const quote=(await api("/api/flights/quote","POST",{targetId:target.id,fleet:{smallTransport:1},kind:"raid"},signup.cookie)).payload;
+ const before=(await api("/api/state","GET",undefined,signup.cookie)).payload.state;
+ const launch=(await api("/api/raids","POST",{targetId:target.id,fleet:{smallTransport:1}},signup.cookie)).payload;
+ assert.ok(quote.fuel>0);assert.equal(launch.flight.fuel,quote.fuel);
+ assert.equal(launch.state.planets[0].resources.tritium,before.planets[0].resources.tritium-quote.fuel);
+ assert.equal(launch.flight.attackerCareer,"warrior");
+ const recalled=(await api("/api/flights/recall","POST",{flightId:launch.flight.id},signup.cookie)).payload;
+ assert.equal(recalled.state.planets[0].resources.tritium,launch.state.planets[0].resources.tritium);
+ const returning=recalled.state.pvpFlights.find(f=>f.id===launch.flight.id);
+ await resolveDuePvpFlights(returning.returnAt+1);
+ const empty=(await api("/api/state","GET",undefined,signup.cookie)).payload.state;
+ empty.planets[0].resources.tritium=0;empty.resources.tritium=0;
+ await api("/api/state","PUT",{state:empty},signup.cookie);
+ const refused=await fetch(base+"/api/raids",{method:"POST",headers:{"Content-Type":"application/json",Cookie:signup.cookie},body:JSON.stringify({targetId:target.id,fleet:{smallTransport:1}})});
+ assert.equal(refused.status,400);
+ assert.equal((await api("/api/state","GET",undefined,signup.cookie)).payload.state.ships.smallTransport,2);
 });

@@ -1,6 +1,6 @@
 import { DAILY_GOALS, progression } from "./progression.js?v=20261103";
-import { FLEET, DEFENSE, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261103-debris-1";
-import { simulateBattle } from "./combat.js?v=20261006-loot-1";
+import { FLEET, DEFENSE, shipCargo, fleetCapacity, flightFuel, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261103-cargo-fuel-1";
+import { simulateBattle } from "./combat.js?v=20261103-cargo-fuel-1";
 import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js";
 const IS_DEMO = location.pathname === "/demo";
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -794,6 +794,13 @@ async function fetchGalaxy({ force = false } = {}) {
   }
 }
 
+async function confirmFlight(targetId,fleet,kind,probes) {
+ const response=await fetch("/api/flights/quote",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({targetId,fleet,kind,probes})});
+ const quote=await response.json();
+ if(!response.ok)throw new Error(quote.error||"Flugkosten konnten nicht ermittelt werden.");
+ if(kind === "colonize") return window.confirm(`Kolonie gründen?\nTreibstoff: ${formatNumber(quote.fuel)} Tritium für den einfachen Flug.\nDas Kolonieschiff wird verbraucht.`);
+ return window.confirm(`Flotte starten?\nTreibstoff: ${formatNumber(quote.fuel)} Tritium für Hin- und Rückflug.\nHinflug: ${formatDuration(quote.duration)}.\nTreibstoff wird beim Start abgezogen und bei Rückruf nicht erstattet.`);
+}
 async function raidTarget(targetId) {
   if (actionBusy || isSaving) return;
   actionBusy = true;
@@ -806,6 +813,7 @@ async function raidTarget(targetId) {
     return;
   }
   try {
+    if (!await confirmFlight(targetId,fleet,"raid")) return;
     const response = await fetch("/api/raids", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -830,6 +838,7 @@ async function spyTarget(targetId, probes) {
   actionBusy = true;
   try {
     if (!await save({ quiet: true })) return;
+    if (!await confirmFlight(targetId,null,"spy",probes)) return;
     const response = await fetch("/api/spy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetId, probes }) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Aufklärung fehlgeschlagen.");
@@ -1133,7 +1142,7 @@ function missionStatusMarkup() {
     const sourceName = state.planets.find(planet => planet.id === mission.sourcePlanetId)?.name || activePlanet().name;
     const destinationName = destination?.name || MISSIONS[mission.targetId]?.name || mission.targetName || mission.targetId;
     const routeProgress = outboundDone ? 100 - returnProgress : outboundProgress;
-    const route = `<div class="flight-route ${outboundDone ? "returning" : ""}"><span>${escapeHtml(sourceName)}</span><div class="flight-route-track"><i style="left:${routeProgress}%">${outboundDone ? "◀" : "▶"}</i></div><span>${escapeHtml(destinationName)}</span></div><div class="flight-manifest"><span class="flight-phase">${outboundDone ? "RÜCKKEHR" : mission.kind === "transport" ? "TRANSPORT" : mission.kind === "spy" ? "SPIONAGE" : mission.kind === "raid" ? "ANGRIFF" : "EXPEDITION"}</span>${Object.entries(mission.cargo || mission.loot || {}).filter(([key,count])=>RESOURCE_LABELS[key] && count>0).map(([key,count])=>`<span>${RESOURCE_LABELS[key]}: ${formatNumber(count)}</span>`).join("")}</div>`;
+    const route = `<div class="flight-route ${outboundDone ? "returning" : ""}"><span>${escapeHtml(sourceName)}</span><div class="flight-route-track"><i style="left:${routeProgress}%">${outboundDone ? "◀" : "▶"}</i></div><span>${escapeHtml(destinationName)}</span></div><div class="flight-manifest"><span class="flight-phase">${outboundDone ? "RÜCKKEHR" : mission.kind === "transport" ? "TRANSPORT" : mission.kind === "spy" ? "SPIONAGE" : mission.kind === "raid" ? "ANGRIFF" : "EXPEDITION"}</span>${mission.fuel ? `<span>Treibstoff: ${formatNumber(mission.fuel)} Tritium</span>` : ""}${Object.entries(mission.cargo || mission.loot || {}).filter(([key,count])=>RESOURCE_LABELS[key] && count>0).map(([key,count])=>`<span>${RESOURCE_LABELS[key]}: ${formatNumber(count)}</span>`).join("")}</div>`;
     const canRecall = !outboundDone && (mission.attackerId || mission.id);
     const recallBtn = canRecall ? `<button class="secondary-button" data-recall-flight="${escapeHtml(mission.id)}" data-recall-pvp="${Boolean(mission.attackerId)}">⟲ Flotte zurückrufen</button>` : "";
     return `<section class="fleet-operation"><div class="fleet-operation-head"><div><strong>${escapeHtml(target.name)}</strong><span>${escapeHtml(target.coordinates || "")}</span></div><small>${escapeHtml(fleet || "Flottenverband")}</small></div>${route}<div class="queue-row ${outboundDone ? "completed-leg" : ""}"><div class="queue-top"><strong>Hinflug <span>· ${outboundDone ? "angekommen" : "unterwegs"}</span></strong><span>${outboundDone ? `Ankunft ${formatClock(mission.arrivesAt)}` : `${formatDuration(mission.arrivesAt - now)} · ${formatClock(mission.arrivesAt)}`}</span></div><div class="progress"><i style="width:${outboundProgress}%"></i></div>${recallBtn}</div><div class="queue-row return-leg ${outboundDone ? "active-return" : "waiting"}"><div class="queue-top"><strong>Rückflug <span>· ${outboundDone ? "unterwegs" : "geplant"}</span></strong><span>${outboundDone ? `${formatDuration(returnAt - now)} · ${formatClock(returnAt)}` : `Rückkehr ca. ${formatClock(returnAt)}`}</span></div><div class="progress"><i style="width:${returnProgress}%"></i></div></div></section>`;
@@ -1153,6 +1162,7 @@ async function colonizeTarget(targetId) {
   actionBusy = true;
   try {
     if (!await save({ quiet: true })) return;
+    if (!await confirmFlight(targetId,{colonyShip:1},"colonize")) return;
     const response = await fetch("/api/colonize", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ targetId }) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Besiedlung fehlgeschlagen.");
@@ -1204,12 +1214,13 @@ function careerView() {
   const tradeRank = Math.min(10, Math.floor(Math.sqrt(tradeXp / 50)));
   const warRank = Math.min(10, Math.floor(Math.sqrt(warXp / 50)));
   return `<section class="view-heading"><div><span class="eyebrow">IMPERIALE LAUFBAHN</span><h1>Karriere & Spezialisierung</h1><p>Wähle die Ausrichtung deines Imperiums. Deine Laufbahn bestimmt, ob deine Kolonien durch Hochleistungs-Logistik oder durch Flottenüberlegenheit und Trümmerfeld-Bergung dominieren.</p></div><span class="sector-label">${currentPath === "trader" ? "HÄNDLERGILDE" : currentPath === "warrior" ? "KRIEGERKASTE" : "UNENTSCHIEDEN"}</span></section>
-  <div class="career-status" role="status"><strong>${currentPath ? "Aktive Klasse: " + (currentPath === "trader" ? "Händler" : "Krieger") : "Noch keine Klasse gewählt"}</strong><span>Die Boni gelten ab der gespeicherten Auswahl. Ränge zeigen deinen Fortschritt und gewähren keine zusätzlichen Boni.</span></div>
+  <div class="career-status" role="status"><strong>${currentPath ? "Aktive Klasse: " + (currentPath === "trader" ? "Händler" : "Krieger") : "Noch keine Klasse gewählt"}</strong><span>Die Boni gelten ab der gespeicherten Auswahl. Ränge zeigen deinen Fortschritt und gewähren keine zusätzlichen Boni. Bei serverseitigen Flügen wird die Klasse beim Start festgelegt.</span></div>
   <div class="grid two-column career-grid">
     <section class="panel career-card career-card--trader ${currentPath === "trader" ? "is-selected" : ""}"><div class="career-art"><img src="/assets/cargo-drone.svg" alt="Futuristischer Handelsfrachter" /><span>HANDEL · INDUSTRIE · LOGISTIK</span></div><div class="panel-inner"><div class="panel-title"><h2>◈ Pfad der Händlergilde</h2><span>RANG ${tradeRank} · ${formatNumber(tradeXp)} EP</span></div>
       <p>Fokus auf friedliche Expansion, planetare Spezialisierung und Konvoi-Logistik zwischen deinen Welten.</p>
       <div class="stat-list" style="margin:14px 0">
         <div class="stat-line"><span>Minen- & Synthese-Ertrag</span><strong class="positive">+15 % auf allen Welten</strong></div>
+        <div class="stat-line"><span>Transporter-Frachtraum</span><strong class="positive">+25 % Ladekapazität</strong></div>
         <div class="stat-line"><span>Lagerkapazität</span><strong class="positive">+25 % Speichervolumen</strong></div>
         <div class="stat-line"><span>Konvoi-Antrieb</span><strong class="positive">+20 % schnellere Transporter</strong></div>
       </div>
@@ -1220,7 +1231,7 @@ function careerView() {
       <div class="stat-list" style="margin:14px 0">
         <div class="stat-line"><span>Waffen- & Zielsysteme</span><strong class="positive">+2 effektive Avionik-Stufen</strong></div>
         <div class="stat-line"><span>Beutefrachtraum bei Raids</span><strong class="positive">+20 % Plünderungskapazität</strong></div>
-        <div class="stat-line"><span>Trümmerfelder (alle Klassen)</span><strong class="positive">30 % der Schiffskosten im Orbit</strong></div>
+        <div class="stat-line"><span>Reine Kampfflotten</span><strong class="positive">+20 % Tempo · mindestens 3 Min.</strong></div><div class="stat-line"><span>Angriffstreibstoff</span><strong class="positive">−25 % Tritiumverbrauch</strong></div><div class="stat-line"><span>Recycler</span><strong class="positive">+25 % Bergungskapazität</strong></div>
       </div>
       <button class="${currentPath === "warrior" ? "secondary-button" : "primary-button"}" data-select-career="warrior" ${currentPath === "warrior" ? "disabled" : ""}>${currentPath === "warrior" ? "✓ Aktive Spezialisierung" : "Kriegerkaste wählen"}</button>
     </div></section>
@@ -1243,13 +1254,13 @@ function statisticsView() {
 function transferPlan() {
   const destination = state.planets.find(p => p.id === transferDraft.destination);
   const fleet = Object.fromEntries(Object.entries(transferSelection).filter(([key,count]) => ["cargoDrone","smallTransport","mediumTransport","largeTransport"].includes(key) && Number.isSafeInteger(count) && count > 0));
-  const capacity = Object.entries(fleet).reduce((sum,[key,count])=>sum+(FLEET[key]?.cargo || 0)*count,0);
+  const capacity = fleetCapacity(fleet,state.career?.path);
   const cargo = Object.fromEntries(Object.keys(RESOURCE_LABELS).map(key=>[key,Math.max(0,Math.floor(Number(transferDraft[key]) || 0))]));
   const total = Object.values(cargo).reduce((sum,n)=>sum+n,0);
   const sourcePos = activePlanet().position, targetPos = destination?.position;
   const distance = sourcePos && targetPos ? Math.hypot(sourcePos.x-targetPos.x,sourcePos.y-targetPos.y) : 5;
   const duration = transferDuration(distance);
-  return {destination,fleet,capacity,cargo,total,duration};
+  return {destination,fleet,capacity,cargo,total,duration,fuel:flightFuel(fleet,distance,state.career?.path,"transport")};
 }
 function transferDuration(distance) {
   const speed = worldSpeedAt();
@@ -1262,6 +1273,7 @@ function transferProblem(step = 3) {
   if (step >= 2 && (!plan.destination || plan.destination.id === activePlanet().id)) return "Wähle eine andere eigene Zielwelt.";
   if (step >= 3 && (!Number.isSafeInteger(plan.total) || !plan.total || plan.total>plan.capacity)) return "Fracht muss größer als null sein und in die Transporter passen.";
   if (step >= 3 && Object.keys(plan.cargo).some(key=>plan.cargo[key]>(state.resources[key] || 0))) return "Nicht genügend Rohstoffe auf der Startwelt.";
+  if (step >= 3 && plan.cargo.tritium + plan.fuel > state.resources.tritium) return "Tritium muss für Fracht und Treibstoff reichen.";
   return "";
 }
 function fleetsView() {
@@ -1270,10 +1282,10 @@ function fleetsView() {
   const plan = transferPlan();
   const steps = ["Schiffe","Zielwelt","Auftrag & Fracht","Prüfen"];
   let stage = "";
-  if (transferStep === 1) stage = `<h3>Transporter zusammenstellen</h3><div class="transfer-ships">${transports.map(([key,item])=>`<label><span>${escapeHtml(SHIPS[key].name)}<small>${formatNumber(state.ships[key] || 0)} verfügbar · ${formatNumber(item.cargo)} Fracht pro Schiff</small></span><input aria-label="${escapeHtml(SHIPS[key].name)} auswählen" data-transfer-fleet="${key}" type="number" min="0" max="${state.ships[key] || 0}" value="${transferSelection[key] || 0}"></label>`).join("")}</div><button class="secondary-button" data-transfer-all>Alle verfügbaren Transporter</button>`;
+  if (transferStep === 1) stage = `<h3>Transporter zusammenstellen</h3><div class="transfer-ships">${transports.map(([key,item])=>`<label><span>${escapeHtml(SHIPS[key].name)}<small>${formatNumber(state.ships[key] || 0)} verfügbar · ${formatNumber(shipCargo(key,state.career?.path))} Fracht pro Schiff</small></span><input aria-label="${escapeHtml(SHIPS[key].name)} auswählen" data-transfer-fleet="${key}" type="number" min="0" max="${state.ships[key] || 0}" value="${transferSelection[key] || 0}"></label>`).join("")}</div><button class="secondary-button" data-transfer-all>Alle verfügbaren Transporter</button>`;
   if (transferStep === 2) stage = `<h3>Flugroute wählen</h3><div class="transfer-grid"><label>Startwelt<input value="${escapeHtml(activePlanet().name)} · ${escapeHtml(activePlanet().coordinates)}" disabled></label><label>Zielwelt<select id="transfer-destination"><option value="">Bitte auswählen</option>${destinations.map(p=>`<option value="${escapeHtml(p.id)}" ${transferDraft.destination===p.id?"selected":""}>${escapeHtml(p.name)} · ${escapeHtml(p.coordinates)}</option>`).join("")}</select></label></div><p>Nur eigene Kolonien stehen für diesen Transport zur Auswahl.</p>`;
-  if (transferStep === 3) stage = `<h3>Auftrag: Rohstofftransport</h3><p>Fracht wird am Ziel entladen. Die Transporter kehren automatisch zurück; überschüssige Fracht bei vollen Lagern kommt wieder mit.</p><div class="transfer-grid cargo-inputs">${Object.keys(RESOURCE_LABELS).map(key=>`<label>${resourceIconMarkup(key,"resource-icon--inline")} ${RESOURCE_LABELS[key]}<input id="transfer-${key}" aria-label="${RESOURCE_LABELS[key]} transportieren" type="number" min="0" max="${Math.floor(state.resources[key] || 0)}" value="${transferDraft[key] || 0}" data-transfer-resource="${key}"><small>${formatNumber(state.resources[key])} verfügbar</small></label>`).join("")}</div><p>Beladen: <b id="transfer-loaded">${formatNumber(plan.total)}</b> / ${formatNumber(plan.capacity)}</p>`;
-  if (transferStep === 4) stage = `<h3>Startfreigabe prüfen</h3><div class="transfer-review"><div><span>Route</span><strong>${escapeHtml(activePlanet().name)} → ${escapeHtml(plan.destination?.name || "Ziel fehlt")}</strong></div><div><span>Flotte</span><strong>${Object.entries(plan.fleet).map(([key,count])=>`${count} × ${escapeHtml(SHIPS[key].name)}`).join(" · ")}</strong></div><div><span>Fracht</span><strong>${costMarkup(plan.cargo)}</strong></div><div><span>Hinflug / Gesamtflug</span><strong>${formatDuration(plan.duration)} / ${formatDuration(plan.duration*2)}</strong></div><div><span>Ankunft bei Start jetzt</span><strong>${formatDateTime(Date.now()+plan.duration)}</strong></div></div><p>Erst „Konvoi entsenden“ zieht Rohstoffe ab und startet die Flotte.</p>`;
+  if (transferStep === 3) stage = `<h3>Auftrag: Rohstofftransport</h3><p>Fracht wird am Ziel entladen. Die Transporter kehren automatisch zurück; überschüssige Fracht bei vollen Lagern kommt wieder mit.</p><div class="transfer-grid cargo-inputs">${Object.keys(RESOURCE_LABELS).map(key=>`<label>${resourceIconMarkup(key,"resource-icon--inline")} ${RESOURCE_LABELS[key]}<input id="transfer-${key}" aria-label="${RESOURCE_LABELS[key]} transportieren" type="number" min="0" max="${Math.floor(state.resources[key] || 0)}" value="${transferDraft[key] || 0}" data-transfer-resource="${key}"><small>${formatNumber(state.resources[key])} verfügbar</small></label>`).join("")}</div><p>Treibstoff für Hin- und Rückflug: <strong>${formatNumber(plan.fuel)} Tritium</strong></p><p>Beladen: <b id="transfer-loaded">${formatNumber(plan.total)}</b> / ${formatNumber(plan.capacity)}</p>`;
+  if (transferStep === 4) stage = `<h3>Startfreigabe prüfen</h3><div class="transfer-review"><div><span>Route</span><strong>${escapeHtml(activePlanet().name)} → ${escapeHtml(plan.destination?.name || "Ziel fehlt")}</strong></div><div><span>Flotte</span><strong>${Object.entries(plan.fleet).map(([key,count])=>`${count} × ${escapeHtml(SHIPS[key].name)}`).join(" · ")}</strong></div><div><span>Fracht</span><strong>${costMarkup(plan.cargo)}</strong></div><div><span>Treibstoff (Hin- und Rückflug)</span><strong>${formatNumber(plan.fuel)} Tritium</strong></div><div><span>Hinflug / Gesamtflug</span><strong>${formatDuration(plan.duration)} / ${formatDuration(plan.duration*2)}</strong></div><div><span>Ankunft bei Start jetzt</span><strong>${formatDateTime(Date.now()+plan.duration)}</strong></div></div><p>Erst „Konvoi entsenden“ zieht Rohstoffe ab und startet die Flotte.</p>`;
   const convoy = destinations.length ? `<section class="panel transfer-console"><div class="panel-inner"><div class="panel-title"><h2>Konvoiassistent</h2><span>SCHRITT ${transferStep} / 4</span></div><ol class="wizard-steps">${steps.map((label,i)=>`<li class="${i+1===transferStep?"current":i+1<transferStep?"done":""}" ${i+1===transferStep?'aria-current="step"':""}>${i+1}. ${label}</li>`).join("")}</ol><div class="wizard-stage">${stage}</div><div class="transfer-footer"><span>Frachtraum: <b id="transfer-capacity">${formatNumber(plan.capacity)}</b></span><div>${transferStep>1?'<button class="secondary-button" data-transfer-back>Zurück</button>':""} ${transferStep<4?'<button class="primary-button" data-transfer-next>Weiter →</button>':'<button class="primary-button" data-start-transfer>Konvoi entsenden</button>'}</div></div></div></section>` : '<section class="panel panel-inner"><div class="empty-state"><strong>Noch keine Zielwelt</strong>Besiedle eine zweite Welt, um Rohstoffe zwischen eigenen Planeten zu transportieren.</div></section>';
   return `<section class="view-heading"><div><span class="eyebrow">FLOTTENKOMMANDO</span><h1>Flottenbefehle</h1><p>Transporte Schritt für Schritt planen. Für Spionage und Angriffe wählst du einen Planeten auf der Sternenkarte.</p></div><button class="secondary-button" data-open-galaxy>Sternenkarte öffnen</button></section>` + convoy + `<section class="panel panel-inner"><h2>Laufende Einsätze</h2>${missionStatusMarkup()}</section><details class="panel fleet-inventory"><summary>Gesamte Flotte anzeigen</summary>${tablePanel("Flottenbestand",["Schiff","Verfügbar"],Object.entries(SHIPS).filter(([,item])=>!item.isDefense).map(([key,item])=>`<tr><td>${escapeHtml(item.name)}</td><td>${formatNumber(state.ships[key])}</td></tr>`))}</details><section class="mission-list">${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
 }
@@ -1298,12 +1310,13 @@ function simulatorView() {
     defenderAvionics: 0, commandCenter: 1, shipyard: 0,
   };
   const inputRows = (catalog, values, side) => Object.entries(catalog).map(([key,item]) => `<label><span>${escapeHtml(SHIPS[key]?.name || item.name || key)}</span><input type="number" min="0" max="1000000" step="1" value="${Math.max(0,Number(values[key])||0)}" data-sim-side="${side}" data-sim-key="${key}"></label>`).join("");
-  const result = simulationDraft ? simulateBattle(draft) : null;
+  const attackerCareer = draft.attackerCareer ?? state.career?.path ?? null;
+  const result = simulationDraft ? simulateBattle({...draft,attackerCareer,attackerAvionics:(draft.attackerAvionics||0)+(attackerCareer==="warrior"?2:0)}) : null;
   const unknown = simulationSource?.unknown || [];
   const lossText = values => Object.entries(values).filter(([,amount])=>amount).map(([key,amount])=>`${formatNumber(amount)} × ${SHIPS[key]?.name || key}`).join(" · ") || "keine";
   return `<section class="view-heading"><div><span class="eyebrow">TAKTIKZENTRUM</span><h1>Kampfsimulator</h1><p>Trage hypothetische Flotten und planetare Abwehr ein. Der Simulator nutzt dieselbe Formel wie echte Angriffe; der tatsächliche Gegnerbestand kann sich bis zur Ankunft ändern.</p></div></section>
   ${simulationSource ? `<section class="panel panel-inner sim-intel-source"><span class="eyebrow">AUS SPIONAGEBERICHT</span><h2>${escapeHtml(simulationSource.signature)}</h2><p>Erfasst am ${formatDateTime(simulationSource.createdAt)}. Bekannte Verteidigerdaten sind bereits eingetragen; ändere die Angriffsflotte nach Bedarf.</p>${unknown.length ? `<p class="warning">Nicht aufgedeckt: ${escapeHtml(unknown.join(", "))}. Fehlende Werte stehen vorläufig auf 0 – ein scheinbarer Sieg kann deshalb täuschen.</p>` : ""}<button class="secondary-button" data-view-jump="messages">Zurück zum Bericht →</button></section>` : ""}
-  <div class="sim-grid"><section class="panel panel-inner"><h2>Angreifende Flotte</h2><div class="sim-inputs">${inputRows(FLEET,draft.attackerFleet,"attackerFleet")}</div><label>Avionik des Angreifers<input type="number" min="0" max="100" value="${draft.attackerAvionics}" data-sim-key="attackerAvionics"></label></section>
+  <div class="sim-grid"><section class="panel panel-inner"><h2>Angreifende Flotte</h2><label>Klasse des Angreifers<select id="sim-attacker-career">${[["","Keine Klasse"],["trader","Händler"],["warrior","Krieger"]].map(([key,label])=>`<option value="${key}" ${key===(attackerCareer||"")?"selected":""}>${label}</option>`).join("")}</select></label><div class="sim-inputs">${inputRows(FLEET,draft.attackerFleet,"attackerFleet")}</div><label>Avionik des Angreifers<input type="number" min="0" max="100" value="${draft.attackerAvionics}" data-sim-key="attackerAvionics"></label></section>
   <section class="panel panel-inner"><h2>Verteidigung</h2><h3>Schiffe im Orbit</h3><div class="sim-inputs">${inputRows(FLEET,draft.defenderFleet,"defenderFleet")}</div><h3>Planetare Abwehr</h3><div class="sim-inputs">${inputRows(DEFENSE,draft.defenses,"defenses")}</div><div class="sim-inputs">${[["defenderAvionics","Avionik"],["commandCenter","Kommandozentrale"],["shipyard","Orbitalwerft"]].map(([key,label])=>`<label><span>${label}</span><input type="number" min="0" max="100" value="${draft[key]}" data-sim-key="${key}"></label>`).join("")}</div></section></div>
   <div class="sim-actions"><button class="primary-button" data-simulate>Schlacht berechnen</button><button class="secondary-button" data-sim-reset>Zurücksetzen</button></div>
   ${result ? `<section class="panel panel-inner sim-result ${result.won ? "sim-win" : "sim-loss"}"><span class="eyebrow">SIMULATION · KEIN ECHTER KAMPF</span><h2>${result.won ? "Angreifer gewinnt im Modell" : "Verteidiger hält stand"}</h2><p>Angriff <strong>${formatNumber(result.attackPower)}</strong> · Abwehr <strong>${formatNumber(result.defensePower)}</strong> · Frachtraum <strong>${formatNumber(result.capacity)}</strong></p><p>Angreifer-Verluste: ${escapeHtml(lossText(result.losses))}</p><p>Verlorene Abwehr: ${escapeHtml(lossText(result.defenseLosses))}</p>${unknown.length ? `<p class="warning">Unbekannte Verteidigerwerte sind mit 0 berechnet. Das Ergebnis ist keine sichere Prognose.</p>` : ""}<small>Beute hängt vom Rohstoffbestand bei Ankunft ab und wird hier nicht vorhergesagt.</small></section>` : ""}`;
@@ -1352,7 +1365,7 @@ function debrisMarkup(target) {
   const field = target.debris;
   if (!field || !(field.metal > 0 || field.crystal > 0)) return "";
   const available = state.ships.recycler || 0;
-  return `<section class="panel panel-inner" style="margin:14px 0"><h3>✦ Trümmerfeld im Orbit</h3><p>${formatNumber(field.metal)} Metall · ${formatNumber(field.crystal)} Kristall</p><p>30 % der Metall- und Kristallkosten zerstörter Schiffe bleiben zurück. Wer zuerst ankommt, birgt zuerst. Lagerzugang erst nach Rückkehr.</p>${available ? `<label>Recycler (20.000 Fracht je Schiff)<input data-recycler-count="${escapeHtml(target.targetId)}" type="number" min="1" max="${available}" step="1" value="${Math.min(available,Math.max(1,Math.ceil((field.metal+field.crystal)/20000)))}"></label><button class="secondary-button" data-recycle-target="${escapeHtml(target.targetId)}" ${actionBusy || isSaving ? "disabled" : ""}>Bergungsflotte entsenden →</button>` : '<p>Baue Recycler in der Orbitalwerft, um dieses Feld abzubauen.</p><button class="secondary-button" data-view-jump="shipyard">Recycler bauen →</button>'}</section>`;
+  return `<section class="panel panel-inner" style="margin:14px 0"><h3>✦ Trümmerfeld im Orbit</h3><p>${formatNumber(field.metal)} Metall · ${formatNumber(field.crystal)} Kristall</p><p>30 % der Metall- und Kristallkosten zerstörter Schiffe bleiben zurück. Wer zuerst ankommt, birgt zuerst. Lagerzugang erst nach Rückkehr.</p>${available ? `<label>Recycler (${formatNumber(shipCargo("recycler",state.career?.path))} Fracht je Schiff)<input data-recycler-count="${escapeHtml(target.targetId)}" type="number" min="1" max="${available}" step="1" value="${Math.min(available,Math.max(1,Math.ceil((field.metal+field.crystal)/shipCargo("recycler",state.career?.path))))}"></label><button class="secondary-button" data-recycle-target="${escapeHtml(target.targetId)}" ${actionBusy || isSaving ? "disabled" : ""}>Bergungsflotte entsenden →</button>` : '<p>Baue Recycler in der Orbitalwerft, um dieses Feld abzubauen.</p><button class="secondary-button" data-view-jump="shipyard">Recycler bauen →</button>'}</section>`;
 }
 async function recycleTarget(targetId) {
   if (actionBusy || isSaving) return;
@@ -1362,6 +1375,7 @@ async function recycleTarget(targetId) {
   actionBusy = true;
   try {
     if (!await save({ quiet: true })) throw new Error("Bitte zuerst den Spielstand synchronisieren.");
+    if (!await confirmFlight(targetId,{recycler:count},"recycle")) return;
     const response = await fetch("/api/recycle", {method:"POST",headers:{"Content-Type":"application/json"},credentials:"same-origin",body:JSON.stringify({targetId,fleet:{recycler:count}})});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Bergungsflug fehlgeschlagen.");
@@ -1442,6 +1456,10 @@ function galaxyView() {
   <section class="panel galaxy-flight-panel"><div class="panel-inner"><div class="panel-title"><h2>Flottenbewegungen</h2><span>${state.missions.length} AKTIV</span></div>${missionStatusMarkup()}</div></section>
   <section class="mission-list" style="margin-top:16px"><div class="panel-title"><h2>Expeditionen & Kolonisierung</h2><span>NEUTRALE ZIELE</span></div>${Object.values(MISSIONS).map(missionCard).join("")}</section>`;
 }
+function expeditionFuel(mission) {
+ const ship=mission.colonization?"colonyShip":mission.defense>=45?"interceptor":state.ships.cargoDrone>0?"cargoDrone":"interceptor";
+ return Math.ceil(flightFuel({[ship]:1},mission.minutes,state.career?.path,"expedition")*(mission.colonization?.5:1));
+}
 function missionCard(mission) {
   const hasCargo = state.ships.cargoDrone > 0;
   const hasInterceptor = state.ships.interceptor > 0;
@@ -1453,7 +1471,7 @@ function missionCard(mission) {
   const shipNote = colonization ? "Erfordert 1 Kolonieschiff" : needsInterceptor ? "Erfordert 1 Interzeptor" : "Erfordert 1 Frachtdrohne oder Interzeptor";
   const reward = Object.entries(mission.reward).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ");
   const outcome = colonization ? "UNBEKANNT: 96 bis 390 Baufelder" : `BEUTE: ${reward}`;
-  return `<article class="mission-card ${colonization ? "colonization" : ""}"><div><span class="badge">${mission.kind}</span><h2 style="margin-top:8px">${mission.name}</h2><p>${mission.description}</p><span class="risk">${colonization ? "Planetengröße vor Landung verborgen" : `Abwehrstärke ${mission.defense}`} · ${shipNote}</span><br><span class="reward">${outcome}</span></div><button class="primary-button" data-mission="${mission.id}" ${!viable || busy ? "disabled" : ""}>${busy ? "Max. Einsätze aktiv" : viable ? (colonization ? "Kolonie gründen" : "Flotte entsenden") : "Flotte erforderlich"}</button></article>`;
+  return `<article class="mission-card ${colonization ? "colonization" : ""}"><div><span class="badge">${mission.kind}</span><h2 style="margin-top:8px">${mission.name}</h2><p>${mission.description}</p><span class="risk">${colonization ? "Planetengröße vor Landung verborgen" : `Abwehrstärke ${mission.defense}`} · ${shipNote}</span><br><span class="reward">${outcome}</span><p>Treibstoff: ${formatNumber(expeditionFuel(mission))} Tritium · ${colonization ? "einfacher Flug" : "Hin- und Rückflug"}</p></div><button class="primary-button" data-mission="${mission.id}" ${!viable || busy ? "disabled" : ""}>${busy ? "Max. Einsätze aktiv" : viable ? (colonization ? "Kolonie gründen" : "Flotte entsenden") : "Flotte erforderlich"}</button></article>`;
 }
 function mailboxMessageMarkup(message) {
   const inbound = message.direction === "inbound";
@@ -1751,12 +1769,15 @@ function startMission(targetId) {
   const useInterceptor = target.defense >= 45;
   const selectedShip = target.colonization ? "colonyShip" : useInterceptor ? "interceptor" : state.ships.cargoDrone > 0 ? "cargoDrone" : "interceptor";
   if (!state.ships[selectedShip] || state.missions.length >= 2) return;
+  const fuel = expeditionFuel(target);
+  if (state.resources.tritium < fuel) return toast("Nicht genügend Tritium für diesen Einsatz.",true);
+  state.resources.tritium -= fuel;
   state.ships[selectedShip] -= 1;
   const drive = 1 + state.research.combustionDrive * .12;
   const speed = worldSpeedAt();
   const duration = Math.max(speed === 1 ? 0 : 30_000, Math.round((target.minutes * 60_000) / (drive * speed)));
   const departedAt = Date.now();
-  state.missions.push({ id: `${targetId}-${departedAt}`, targetId, departedAt, arrivesAt: departedAt + duration, duration, phase: "outgoing", fleet: { cargoDrone: selectedShip === "cargoDrone" ? 1 : 0, interceptor: selectedShip === "interceptor" ? 1 : 0, colonyShip: selectedShip === "colonyShip" ? 1 : 0 } });
+  state.missions.push({ id: `${targetId}-${departedAt}`, targetId, departedAt, arrivesAt: departedAt + duration, duration, fuel, phase: "outgoing", fleet: { cargoDrone: selectedShip === "cargoDrone" ? 1 : 0, interceptor: selectedShip === "interceptor" ? 1 : 0, colonyShip: selectedShip === "colonyShip" ? 1 : 0 } });
   addLog("mission", `${SHIPS[selectedShip].name} nach ${target.name} entsandt.`);
   toast(`Flotte auf Kurs: ${target.name}.`);
   render();
@@ -1768,20 +1789,23 @@ function startTransfer() {
   const destinationId = transferDraft.destination;
   const destination = state.planets.find(planet => planet.id === destinationId);
   const fleet = Object.fromEntries(Object.entries(transferSelection).filter(([key, count]) => ["cargoDrone","smallTransport","mediumTransport","largeTransport"].includes(key) && Number.isSafeInteger(count) && count > 0));
-  const capacity = Object.entries(fleet).reduce((sum, [key, count]) => sum + (FLEET[key]?.cargo || 0) * count, 0);
+  const capacity = fleetCapacity(fleet,state.career?.path);
   const cargo = Object.fromEntries(Object.keys(RESOURCE_LABELS).map(key => [key, Math.max(0, Math.floor(Number(transferDraft[key]) || 0))]));
   const total = Object.values(cargo).reduce((sum, value) => sum + value, 0);
   if (!destination || destination.id === activePlanet().id || !Number.isSafeInteger(total) || !capacity || !total) return toast("Wähle Transporter, Zielwelt und Fracht.", true);
   if (total > capacity) return toast(`Fracht überschreitet die Kapazität von ${formatNumber(capacity)}.`, true);
   if (Object.keys(cargo).some(key => cargo[key] > (state.resources[key] || 0))) return toast("Nicht genügend Rohstoffe auf der Startwelt.", true);
   for (const [key, count] of Object.entries(fleet)) if (count > (state.ships[key] || 0)) return toast("Ein gewählter Transporter ist nicht verfügbar.", true);
+  const fuel = transferPlan().fuel;
+  if (cargo.tritium + fuel > state.resources.tritium) return toast("Nicht genügend Tritium für Fracht und Treibstoff.",true);
+  state.resources.tritium -= fuel;
   for (const key of Object.keys(cargo)) state.resources[key] -= cargo[key];
   for (const [key, count] of Object.entries(fleet)) state.ships[key] -= count;
   const sourcePos = activePlanet().position, targetPos = destination.position;
   const distance = sourcePos && targetPos ? Math.hypot(sourcePos.x-targetPos.x,sourcePos.y-targetPos.y) : 5;
   const duration = transferDuration(distance);
   const departedAt = Date.now();
-  state.missions.push({ id:`transport-${departedAt}`, kind:"transport", sourcePlanetId:activePlanet().id, destinationPlanetId:destination.id, departedAt, arrivesAt:departedAt + duration, duration, phase:"outgoing", fleet, cargo });
+  state.missions.push({ id:`transport-${departedAt}`, kind:"transport", sourcePlanetId:activePlanet().id, destinationPlanetId:destination.id, departedAt, arrivesAt:departedAt + duration, duration, phase:"outgoing", fleet, cargo, fuel });
   addLog("mission", `Konvoi nach ${destination.name} gestartet.`);
   toast(`Konvoi nach ${destination.name} unterwegs.`);
   transferSelection = {};
@@ -1817,7 +1841,7 @@ content.addEventListener("input", event => {
   if (event.target.dataset.fleetKey) raidSelection[event.target.dataset.fleetKey] = Math.max(0,Math.min(Number(event.target.max),Math.floor(Number(event.target.value)||0)));
   if (event.target.dataset.transferFleet) {
     transferSelection[event.target.dataset.transferFleet] = Math.max(0, Math.min(Number(event.target.max), Math.floor(Number(event.target.value) || 0)));
-    const capacity = Object.entries(transferSelection).reduce((sum,[key,count])=>sum+(FLEET[key]?.cargo || 0)*count,0);
+    const capacity = fleetCapacity(transferSelection,state.career?.path);
     $("#transfer-capacity").textContent = formatNumber(capacity);
     const start = $("[data-start-transfer]");
     if (start) start.disabled = !capacity;
@@ -1912,6 +1936,7 @@ content.addEventListener("click", (event) => {
       if (input.dataset.simSide) draft[input.dataset.simSide][input.dataset.simKey] = amount;
       else draft[input.dataset.simKey] = amount;
     });
+    draft.attackerCareer = $("#sim-attacker-career",content)?.value || null;
     simulationDraft = draft; render(); return;
   }
   if (button.dataset.messagePlayer) {

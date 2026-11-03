@@ -7,7 +7,7 @@ import { dirname, extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import pg from "pg";
-import { FLEET, DEFENSE, worldSpeedAt } from "./public/units.js";
+import { FLEET, DEFENSE, worldSpeedAt, shipCargo, flightFuel, combatSpeedBonus } from "./public/units.js";
 import { simulateBattle } from "./public/combat.js";
 import { requestLocale } from "./locale.mjs";
 import {atomicJsonWriter} from "./storage.mjs";
@@ -517,6 +517,10 @@ async function colonizeSite(key, targetId) {
     if (!positionIsVisible(account, site.position)) fail("Ziel außerhalb der Sichtweite.", 403);
     if (!asWholeNumber(account.state.ships.colonyShip)) fail("Ein Kolonieschiff ist erforderlich.", 400);
     if (account.state.planets.length >= MAX_PLANETS) fail(`Maximal ${MAX_PLANETS} Welten möglich.`, 400);
+    const stock = primaryPlanet(activeGalaxyAccount(account)).resources || account.state.resources;
+    const fuel = Math.ceil(flightFuel({colonyShip:1},galaxyDistance(galaxyPosition(activeGalaxyAccount(account)),site.position),account.state.career?.path,"colonize")/2);
+    if (asWholeNumber(stock.tritium) < fuel) fail(`Nicht genügend Tritium: ${fuel} für die Kolonisierung erforderlich.`);
+    stock.tritium -= fuel;
     const types = [["temperate","Gemäßigte Welt"],["arid","Wüstenwelt"],["ocean","Ozeanwelt"],["ice","Eiswelt"],["volcanic","Vulkanwelt"]];
     const [type, classification] = types[randomBytes(1)[0] % types.length];
     const planet = { id: site.id, name: randomWorldName(`${account.id}:${site.id}`), type, classification, fields: 96 + randomBytes(4).readUInt32BE() % 295, usedFields: 1, coordinates: `X ${site.position.x.toFixed(1)} · Y ${site.position.y.toFixed(1)}`, colonizedAt: Date.now(), homeworld: false, productionLoad: { metal: 100, crystal: 100, tritium: 100 } };
@@ -706,19 +710,19 @@ function spyReportFor(attacker, defender, probeCount) {
   addNotification(defender.state, "scan", "Spionagealarm", `${source} hat ${planet.name || "deinen Planeten"} aufgeklärt. Prüfe Lager, Flotte und Verteidigung.`, "high");
   return report;
 }
-function prepareRaid(attacker, defender, rawFleet) {
+function prepareRaid(attacker, defender, rawFleet, career = attacker.state.career?.path) {
   const fleet = Object.fromEntries(Object.keys(FLEET).map(key=>[key,asWholeNumber(rawFleet?.[key])]));
-  const isWarrior = attacker.state.career?.path === "warrior";
+  const isWarrior = career === "warrior";
   const attackerAvionics = asWholeNumber(attacker.state.research?.avionics) + (isWarrior ? 2 : 0);
   const defenderAvionics = asWholeNumber(defender.state.research?.avionics);
   const defenderShips = Object.fromEntries(Object.keys(FLEET).map(key=>[key,asWholeNumber(defender.state.ships?.[key])]));
   const defenderBuildings = primaryPlanet(defender).buildings || defender.state.buildings || {};
   const planetDefenses = primaryPlanet(defender).defenses || {};
   const defendingDefenses = Object.fromEntries(Object.keys(DEFENSE).map(key=>[key,asWholeNumber(planetDefenses[key])]));
-  const combatBonuses = { attackerAvionics, defenderAvionics, commandCenter:asWholeNumber(defenderBuildings.commandCenter), shipyard:asWholeNumber(defenderBuildings.shipyard) };
+  const combatBonuses = { attackerCareer: career, attackerAvionics, defenderAvionics, commandCenter:asWholeNumber(defenderBuildings.commandCenter), shipyard:asWholeNumber(defenderBuildings.shipyard) };
   const { attackPower, defensePower, won, capacity, losses, defenderShipLosses, defenseLosses, survivors } = simulateBattle({ attackerFleet:fleet, defenderFleet:defenderShips, defenses:defendingDefenses, ...combatBonuses });
   const loot = { metal: 0, crystal: 0, tritium: 0 };
-  const effectiveCapacity = isWarrior ? Math.floor(capacity * 1.2) : capacity;
+  const effectiveCapacity = capacity;
   const debrisCreated = { metal: 0, crystal: 0 };
   for (const key of Object.keys(FLEET)) {
     const destroyed = asWholeNumber(losses[key]) + asWholeNumber(defenderShipLosses[key]);
@@ -773,12 +777,12 @@ function prepareRaid(attacker, defender, rawFleet) {
   addCombatReport(defender.state, { id: combatId, at: resolvedAt, side: "defender", opponent: attacker.username, won: !won, loot, capacity, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, ...composition });
   return { won, fleet, survivors, loot, attackPower, defensePower, losses, defenderShipLosses, defenseLosses, attackerLosses, defenderFleetLossText, defenseLossSummary: defenseLossText, resolvedAt };
 }
-export function flightDuration(attacker, defender, spy, at = Date.now()) {
+export function flightDuration(attacker, defender, spy, at = Date.now(), fleet = {}, kind = spy ? "spy" : "raid") {
   const distance = galaxyDistance(galaxyPosition(attacker), galaxyPosition(defender));
   const drive = asWholeNumber(attacker.state.research?.combustionDrive);
   const speed = worldSpeedAt(at);
   const minimum = speed === 1 ? (spy ? 120000 : 240000) : (spy ? 60000 : 180000);
-  return Math.round(Math.max(minimum, ((spy ? 180000 : 360000) + distance * 10000) / ((1 + drive * .12) * speed)));
+  return Math.round(Math.max(minimum, ((spy ? 180000 : 360000) + distance * 10000) / ((1 + drive * .12) * speed * combatSpeedBonus(fleet,attacker.state.career?.path,kind))));
 }
 function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, now = Date.now(), recycle = false) {
   normalizeAccount(attacker); normalizeAccount(defender);
@@ -809,13 +813,19 @@ function launchPvpAction(attacker, defender, targetPlanetId, rawFleet, spy, now 
   for (const [key, amount] of Object.entries(fleet)) {
     if (amount > asWholeNumber(attacker.state.ships?.[key])) fail("Nicht genügend Schiffe vorhanden.");
   }
+  const career = attacker.state.career?.path || null;
+  const kind = recycle ? "recycle" : spy ? "spy" : "raid";
+  const fuel = flightFuel(fleet,galaxyDistance(galaxyPosition(origin),galaxyPosition(target)),career,kind);
+  const sourceStock = primaryPlanet(origin).resources || attacker.state.resources;
+  if (asWholeNumber(sourceStock.tritium) < fuel) fail(`Nicht genügend Tritium: ${fuel} für Hin- und Rückflug erforderlich.`);
+  sourceStock.tritium -= fuel;
   for (const [key, amount] of Object.entries(fleet)) attacker.state.ships[key] = asWholeNumber(attacker.state.ships[key]) - amount;
-  const duration = npcConfig(attacker) ? Math.max(spy ? 5*60_000 : 15*60_000,flightDuration(origin,target,spy,now)) : flightDuration(origin, target, spy, now);
+  const duration = npcConfig(attacker) ? Math.max(spy ? 5*60_000 : 15*60_000,flightDuration(origin,target,spy,now,fleet,kind)) : flightDuration(origin, target, spy, now,fleet,kind);
   const flight = {
     id: randomBytes(12).toString("hex"), kind: recycle ? "recycle" : spy ? "spy" : "raid", phase: "outgoing",
     attackerId: attacker.id, defenderId: defender.id, sourcePlanetId: primaryPlanet(origin).id,
     sourceName: primaryPlanet(origin).name, targetPlanetId, targetName: targetPlanet.name,
-    attackerName: attacker.username, defenderName: defender.username, fleet, npc: Boolean(npcConfig(attacker)),
+    attackerName: attacker.username, defenderName: defender.username, fleet, fuel, attackerCareer: career, npc: Boolean(npcConfig(attacker)),
     departedAt: now, arrivesAt: now + duration, returnAt: now + duration * 2, duration,
   };
   attacker.state.pvpFlights = [...(attacker.state.pvpFlights || []), flight];
@@ -870,7 +880,7 @@ function settlePvpFlight(attacker, defender, flightId, now) {
       const target = { ...defender, focusPlanet: targetPlanet };
       if (flight.kind === "recycle") {
         const field = defender.state.debrisFields?.[targetPlanet.id];
-        let remaining = asWholeNumber(flight.fleet.recycler) * FLEET.recycler.cargo;
+        let remaining = asWholeNumber(flight.fleet.recycler) * shipCargo("recycler",flight.attackerCareer);
         flight.survivors = { ...flight.fleet };
         flight.loot = { metal: 0, crystal: 0, tritium: 0 };
         for (const resource of ["metal", "crystal"]) {
@@ -886,7 +896,7 @@ function settlePvpFlight(attacker, defender, flightId, now) {
         recordProgress(attacker.state,"scout",signalId(target),now);
         flight.survivors = { spyProbe: Math.max(0, flight.fleet.spyProbe - report.lost) };
       } else {
-        const result = prepareRaid(attacker, target, flight.fleet);
+        const result = prepareRaid(attacker, target, flight.fleet, Object.hasOwn(flight,"attackerCareer") ? flight.attackerCareer : attacker.state.career?.path);
         if (result.won) recordProgress(attacker.state,"victory",flight.id,now);
         flight.survivors = result.survivors;
         flight.loot = result.loot;
@@ -1355,6 +1365,25 @@ const server = createServer(async (request, response) => {
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const body = await readBody(request);
       return json(response, 200, await mutate(() => colonizeSite(current.key, String(body.targetId || ""))));
+    }
+    if (request.method === "POST" && url.pathname === "/api/flights/quote") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response,401,{error:"Anmeldung erforderlich"});
+      const body=await readBody(request), targetId=String(body.targetId||""), split=targetId.indexOf(":");
+      if (body.kind === "colonize") {
+        const site=frontierSites.find(x=>x.id===targetId),origin=activeGalaxyAccount(current.account);
+        if(!site || !positionIsVisible(origin,site.position)) fail("Ziel nicht verfügbar.",404);
+        return json(response,200,{fuel:Math.ceil(flightFuel({colonyShip:1},galaxyDistance(galaxyPosition(origin),site.position),current.account.state.career?.path,"colonize")/2),duration:null});
+      }
+      const defender=split>=0 ? await accountById(targetId.slice(0,split)):null;
+      const planet=defender?.state.planets.find(p=>p.id===targetId.slice(split+1));
+      if(!planet) fail("Ziel nicht verfügbar.",404);
+      const origin=activeGalaxyAccount(current.account),target={...defender,focusPlanet:planet};
+      if(current.account.id!==defender.id&&!targetIsVisible(origin,target)&&!knownSpyReport(current.account.state,targetId))fail("Ziel nicht verfügbar.",404);
+      const kind=["raid","spy","recycle"].includes(body.kind)?body.kind:"raid";
+      const fleet=kind==="spy"?{spyProbe:asWholeNumber(body.probes)}:kind==="recycle"?{recycler:asWholeNumber(body.fleet?.recycler)}:Object.fromEntries(Object.keys(FLEET).map(k=>[k,asWholeNumber(body.fleet?.[k])]));
+      const fuel=flightFuel(fleet,galaxyDistance(galaxyPosition(origin),galaxyPosition(target)),current.account.state.career?.path,kind);
+      return json(response,200,{fuel,duration:flightDuration(origin,target,kind==="spy",Date.now(),fleet,kind)});
     }
     if (request.method === "POST" && ["/api/progression/claim","/api/progression/skin"].includes(url.pathname)) {
       const current = await authenticatedAccount(request);
