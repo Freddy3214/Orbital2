@@ -1,3 +1,4 @@
+import { DAILY_GOALS, progression } from "./progression.js?v=20261103";
 import { FLEET, DEFENSE, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261103-debris-1";
 import { simulateBattle } from "./combat.js?v=20261006-loot-1";
 import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js";
@@ -234,6 +235,10 @@ let lastFullRender = 0;
 let lastLeaderboardFetch = 0;
 let isSaving = false;
 let authMode = "register";
+let lastAnimatedView = "";
+let productionReceipt = null;
+let liveCompletions = 0;
+let gameIsOpen = false;
 let galaxyIntel = [];
 let galaxySensorOrigins = [];
 let fleetStatusFilter = "all";
@@ -558,6 +563,7 @@ function addProduction(hours, planet = activePlanet(), at = Date.now()) {
   for (const resource of Object.keys(RESOURCE_LABELS)) {
     const current = resources[resource];
     resources[resource] = Math.max(current, Math.min(storageCap(resource, planetBuildings(planet)[`${resource}Storage`]), current + rate[resource] * hours));
+    if (productionReceipt) productionReceipt[resource] += resources[resource] - current;
   }
 }
 function grantResources(reward) {
@@ -590,6 +596,7 @@ function resolveQueues(at) {
     if (activeBuilding?.completesAt <= at) {
       planetBuildings(planet)[activeBuilding.key] = activeBuilding.targetLevel;
       buildingQueue(planet).shift();
+      if (gameIsOpen) liveCompletions++;
       planet.usedFields = calculatedPlanetFields(planet);
       addLog("system", `${BUILDINGS[activeBuilding.key].name} auf ${planet.name} Stufe ${activeBuilding.targetLevel} abgeschlossen.`);
       activateNextBuilding(at, planet);
@@ -602,6 +609,7 @@ function resolveQueues(at) {
       } else state.ships[queue.key] += queue.amount;
       addLog("system", `${queue.amount}× ${SHIPS[queue.key].name} aus der Orbitalwerft auf ${planet.name} übernommen.`);
       planet.shipQueue = null;
+      if (gameIsOpen) liveCompletions++;
     }
   }
   const research = state.queues.research;
@@ -609,6 +617,7 @@ function resolveQueues(at) {
     state.research[research.key] = research.targetLevel;
     addLog("system", `${RESEARCH[research.key].name} auf Stufe ${research.targetLevel} erforscht.`);
     state.queues.research = null;
+    if (gameIsOpen) liveCompletions++;
   }
   activateNextOrders(at);
 }
@@ -860,7 +869,11 @@ function openGame(payload) {
   state = payload.state;
   canGrantTestResources = Boolean(payload.capabilities?.testGrant);
   ensureStateShape();
+  const awaySince = Math.min(...state.planets.map(p => Number(planetResources(p).lastUpdate) || Date.now()));
+  productionReceipt = { metal: 0, crystal: 0, tritium: 0 };
   synchronize();
+  const receipt = productionReceipt; productionReceipt = null;
+  gameIsOpen = true;
   $("#commander-name").textContent = state.commander;
   restoreTheme();
   $("#commander-gate").classList.add("hidden");
@@ -868,6 +881,12 @@ function openGame(payload) {
   render();
   fetchLeaderboard();
   save({ quiet: true });
+  if (!IS_DEMO && Date.now() - awaySince >= 300000) {
+    const dialog = document.createElement("dialog");
+    dialog.className = "offline-receipt";
+    dialog.innerHTML = `<h2>Willkommen zurück, ${escapeHtml(state.commander)}.</h2><p>Deine Kolonien haben während deiner Abwesenheit produziert:</p><div class="receipt-resources">${Object.keys(RESOURCE_LABELS).map(key => `<div>${resourceIconMarkup(key,"resource-icon--inline")}<strong>+${formatNumber(receipt[key])}</strong><span>${RESOURCE_LABELS[key]}</span></div>`).join("")}</div><p>Über alle Planeten, nach Lagergrenzen. Transporte und Beute sind hier nicht enthalten.</p><form method="dialog"><button class="primary-button" autofocus>Zur Kommandobrücke →</button></form>`;
+    document.body.append(dialog); dialog.addEventListener("close",()=>dialog.remove(),{once:true}); dialog.showModal();
+  }
 }
 async function enterGame(name, password) {
   const button = $("#start-button");
@@ -899,6 +918,7 @@ async function logout() {
   await save({ quiet: true });
   try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch { /* Local UI can still close the session. */ }
   state = null;
+  gameIsOpen = false;
   messageRecipient = "";
   messageSubject = "";
   messageBody = "";
@@ -957,9 +977,27 @@ function queueRows(buildingsOnly = false) {
 function notificationMarkup() {
   const incoming = (state.incomingFlights || []).sort((a,b)=>a.arrivesAt-b.arrivesAt);
   if (!incoming.length) return `<div class="empty-state"><strong>Kein Anflug gemeldet</strong>Angreifende Flotten und Sonden erscheinen hier bis zur Ankunft.</div>`;
-  return `<p class="warning">${incoming.length} fremde ${incoming.length === 1 ? "Flotte" : "Flotten"} im Anflug · Rohstoffe können vor Ankunft transportiert werden.</p><div class="log-list notification-list">${incoming.map(flight=>`<article class="log-row combat notification-high"><time>${formatClock(flight.arrivesAt)}</time><span><b>⚠ ${flight.kind === "spy" ? "Spionagesonden" : "Angriff"} auf ${escapeHtml(flight.targetName)}</b><small>${escapeHtml(flight.attackerName)} · Ankunft in ${formatDuration(flight.arrivesAt-Date.now())}</small></span></article>`).join("")}</div>`;
+  return `<p class="warning">${incoming.length} fremde ${incoming.length === 1 ? "Flotte" : "Flotten"} im Anflug · Rohstoffe können vor Ankunft transportiert werden.</p><div class="log-list notification-list">${incoming.map(flight=>`<article class="log-row combat notification-high ${flight.kind !== "spy" && flight.arrivesAt - Date.now() <= 300000 ? "attack-imminent" : ""}"><time>${formatClock(flight.arrivesAt)}</time><span><b>⚠ ${flight.kind === "spy" ? "Spionagesonden" : "Angriff"} auf ${escapeHtml(flight.targetName)}</b><small>${escapeHtml(flight.attackerName)} · Ankunft in <strong class="hostile-countdown" data-arrival-at="${flight.arrivesAt}">${formatDuration(flight.arrivesAt-Date.now())}</strong></small></span></article>`).join("")}</div>`;
 }
 
+function dailyProgressMarkup(){
+ const p=progression(state),d=p.daily;
+ return `<details class="panel panel-inner daily-progress"><summary>Tagesmissionen & Saison <small>${formatNumber(p.points)} Punkte · 00:00 UTC</small></summary><p>Optionale Ziele · keine verlorenen Serien und kein Vorteil im Kampf.</p>${DAILY_GOALS.map(goal=>{
+ const value=goal.id==="scout"?(d.scanned||[]).length:d[goal.id]||0,done=d.claimed.includes(goal.id);
+ return `<div class="daily-goal"><div><strong>${goal.label}</strong><small>${Math.min(goal.target,value)} / ${goal.target}</small><progress max="${goal.target}" value="${value}"></progress></div><button class="secondary-button" data-daily-claim="${goal.id}" ${done||value<goal.target||actionBusy?"disabled":""}>${done?"✓ Abgeholt":"+100 Saisonpunkte"}</button></div>`;
+ }).join("")}<div class="season-cosmetic"><strong>Saison ${p.season} · ${formatNumber(p.points)} Punkte</strong><p>300 Punkte schalten den Aurora-Planetenrahmen dauerhaft frei. Zum Monatswechsel beginnen die Saisonpunkte neu.</p><button class="secondary-button" data-planet-skin="${p.skin==="aurora"?"classic":"aurora"}" ${!p.unlocked.includes("aurora")||actionBusy?"disabled":""}>${p.skin==="aurora"?"Klassisches Design verwenden":p.unlocked.includes("aurora")?"Aurora-Rahmen aktivieren":"Aurora-Rahmen · ab 300 Punkten"}</button></div></details>`;
+}
+async function progressionAction(path,body){
+ if(actionBusy||isSaving)return;
+ actionBusy=true;
+ try{
+  if(!await save({quiet:true}))throw new Error("Bitte zuerst synchronisieren.");
+  const response=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const payload=await response.json();if(!response.ok)throw new Error(payload.error||"Aktion fehlgeschlagen.");
+  state=payload.state;ensureStateShape();toast("Fortschritt gespeichert.");
+ }catch(error){toast(error.message,true);}
+ finally{actionBusy=false;render();}
+}
 function overviewView() {
   const energy = energyStats();
   const rate = production();
@@ -969,6 +1007,7 @@ function overviewView() {
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1>${unreadCount ? `<button class="dashboard-unread" data-open-messages>✉ ${unreadCount} ungelesene ${unreadCount === 1 ? "Nachricht" : "Nachrichten"} · Postfach öffnen →</button>` : ""}<p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Flotten, Baureihen und Meldungen bleiben hier im Blick.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
     ${state.buildBoostUntil > Date.now() && state.planets.length === 1 ? starterFlightpathMarkup() : ""}
+    ${dailyProgressMarkup()}
     <div class="tip" style="margin-bottom:15px"><b>${worldSpeedAt() === WORLD_SPEED ? "Schnelle Galaxie · ×10" : "Schnelle Galaxie startet bald"}</b><span>${worldSpeedAt() === WORLD_SPEED ? "Neue Bau-, Forschungs- und Werftaufträge sowie die Rohstoffförderung laufen zehnmal schneller. PvP-Angriffe brauchen mindestens drei Minuten Anflugzeit." : `Die zehnfache Geschwindigkeit für neue Aufträge und Rohstoffförderung startet um ${new Date(SPEED_START_AT).toLocaleTimeString(locale(), {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Berlin"})} Uhr. Laufende Aufträge behalten ihre Zeiten.`}</span></div>
     <div class="grid overview-grid command-overview">
       <section class="panel hero-panel compact-planet">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
@@ -1435,11 +1474,22 @@ function combatRosterMarkup(title, units, catalog, losses = null) {
     return `<div class="combat-roster-row"><span>${escapeHtml(SHIPS[key]?.name || unit.name || key)}</span><strong>${formatNumber(units[key])}×</strong>${lost ? `<small>−${formatNumber(lost)} verloren</small>` : ""}</div>`;
   }).join("") : '<p>Keine Einheiten eingesetzt.</p>'}</section>`;
 }
+function battleVisualMarkup(report) {
+  if (!report.attackerFleet || !report.defenderFleet || !report.defenses) return "";
+  const sum = values => Object.values(values || {}).reduce((n,v)=>n+Math.max(0,Number(v)||0),0);
+  const attackers = sum(report.attackerFleet), defenders = sum(report.defenderFleet)+sum(report.defenses);
+  const attackerLost = sum(report.losses), defenderLost = sum(report.defenderShipLosses)+sum(report.defenseLosses);
+  const bar = (name,total,lost,icon) => {
+    const remaining = Math.max(0,total-lost), percent = total ? remaining/total*100 : 0;
+    return `<div class="battle-side"><span class="battle-ship" aria-hidden="true">${icon}</span><strong>${name}</strong><span>${formatNumber(remaining)} / ${formatNumber(total)} Einheiten verblieben</span><div class="battle-health" role="meter" aria-label="${name}: verbliebene Einheiten" aria-valuemin="0" aria-valuemax="${Math.max(1,total)}" aria-valuenow="${remaining}"><i style="--remaining:${percent}%"></i></div><small>${formatNumber(lost)} verloren</small></div>`;
+  };
+  return `<section class="battle-visual" aria-label="Visuelle Kampfzusammenfassung">${bar("Angreifer",attackers,attackerLost,"➤") }<span class="battle-impact" aria-hidden="true">✦</span>${bar("Verteidiger inklusive Abwehr",defenders,defenderLost,"◀")}<p>Visualisierung des Ergebnisses · Einheitenzahlen, keine simulierten Kampfrunden.</p></section>`;
+}
 function combatArchiveMarkup(report) {
   const loot = Object.entries(report.loot || {}).filter(([, value]) => value).map(([key, value]) => `${resourceIconMarkup(key, "resource-icon--inline")} ${formatNumber(value)}`).join(" · ") || "keine";
   const complete = report.attackerFleet && report.defenderFleet && report.defenses;
   const bonuses = report.combatBonuses;
-  return `<article class="mail-card combat-archive"><div class="mail-card-head"><span class="badge">KAMPF · ${report.won ? "SIEG" : "VERLUST"}</span><time>${formatDateTime(report.at)}</time></div><h3>${escapeHtml(report.side === "attacker" ? "Raubzug gegen" : "Angriff von")} ${escapeHtml(report.opponent)}</h3><div class="combat-power"><span>Angriff <strong>${formatNumber(report.attackPower)}</strong></span><span>Abwehr <strong>${formatNumber(report.defensePower)}</strong></span>${report.capacity !== undefined ? `<span>Frachtraum der Überlebenden <strong>${formatNumber(report.capacity)}</strong></span>` : ""}</div>${complete ? `<div class="combat-rosters">${combatRosterMarkup("Angreifende Flotte", report.attackerFleet, FLEET, report.losses)}${combatRosterMarkup("Verteidigende Flotte", report.defenderFleet, FLEET, report.defenderShipLosses)}${combatRosterMarkup("Planetare Abwehr", report.defenses, DEFENSE, report.defenseLosses)}</div>${bonuses ? `<div class="combat-bonuses"><h4>Technik & Anlagen</h4><span>Angreifer-Avionik ${formatNumber(bonuses.attackerAvionics || 0)}</span><span>Verteidiger-Avionik ${formatNumber(bonuses.defenderAvionics || 0)}</span><span>Kommandozentrale ${formatNumber(bonuses.commandCenter || 0)}</span><span>Orbitalwerft ${formatNumber(bonuses.shipyard || 0)}</span></div>` : ""}` : '<p class="combat-legacy">Bei diesem älteren Kampf wurde die genaue Aufstellung noch nicht gespeichert.</p>'}<p>${report.side === "defender" ? "Entwendete Rohstoffe" : "Beute"}: ${loot}</p>${report.debrisCreated ? `<p>Neues Trümmerfeld: ${formatNumber(report.debrisCreated.metal)} Metall · ${formatNumber(report.debrisCreated.crystal)} Kristall. Mit Recyclern im Sonnensystem bergen.</p>` : ""}<p>Angreiferverluste: ${escapeHtml(report.attackerLosses || "keine")}</p><p>Verteidiger-Flottenverluste: ${escapeHtml(report.defenderFleetLossText || (report.defenderShipLosses ? "keine" : "für ältere Berichte nicht erfasst"))}</p><p>Verlorene Abwehr: ${escapeHtml(report.defenseLossSummary || "keine")}</p>${report.capacity !== undefined ? '<small>Bei Sieg werden bis zu 90 % der zum Einschlag vorhandenen Rohstoffe erbeutet – begrenzt durch den Frachtraum der überlebenden Angriffsflotte.</small>' : ""}</article>`;
+  return `<article class="mail-card combat-archive"><div class="mail-card-head"><span class="badge">KAMPF · ${report.won ? "SIEG" : "VERLUST"}</span><time>${formatDateTime(report.at)}</time></div><h3>${escapeHtml(report.side === "attacker" ? "Raubzug gegen" : "Angriff von")} ${escapeHtml(report.opponent)}</h3>${battleVisualMarkup(report)}<div class="combat-power"><span>Angriff <strong>${formatNumber(report.attackPower)}</strong></span><span>Abwehr <strong>${formatNumber(report.defensePower)}</strong></span>${report.capacity !== undefined ? `<span>Frachtraum der Überlebenden <strong>${formatNumber(report.capacity)}</strong></span>` : ""}</div>${complete ? `<div class="combat-rosters">${combatRosterMarkup("Angreifende Flotte", report.attackerFleet, FLEET, report.losses)}${combatRosterMarkup("Verteidigende Flotte", report.defenderFleet, FLEET, report.defenderShipLosses)}${combatRosterMarkup("Planetare Abwehr", report.defenses, DEFENSE, report.defenseLosses)}</div>${bonuses ? `<div class="combat-bonuses"><h4>Technik & Anlagen</h4><span>Angreifer-Avionik ${formatNumber(bonuses.attackerAvionics || 0)}</span><span>Verteidiger-Avionik ${formatNumber(bonuses.defenderAvionics || 0)}</span><span>Kommandozentrale ${formatNumber(bonuses.commandCenter || 0)}</span><span>Orbitalwerft ${formatNumber(bonuses.shipyard || 0)}</span></div>` : ""}` : '<p class="combat-legacy">Bei diesem älteren Kampf wurde die genaue Aufstellung noch nicht gespeichert.</p>'}<p>${report.side === "defender" ? "Entwendete Rohstoffe" : "Beute"}: ${loot}</p>${report.debrisCreated ? `<p>Neues Trümmerfeld: ${formatNumber(report.debrisCreated.metal)} Metall · ${formatNumber(report.debrisCreated.crystal)} Kristall. Mit Recyclern im Sonnensystem bergen.</p>` : ""}<p>Angreiferverluste: ${escapeHtml(report.attackerLosses || "keine")}</p><p>Verteidiger-Flottenverluste: ${escapeHtml(report.defenderFleetLossText || (report.defenderShipLosses ? "keine" : "für ältere Berichte nicht erfasst"))}</p><p>Verlorene Abwehr: ${escapeHtml(report.defenseLossSummary || "keine")}</p>${report.capacity !== undefined ? '<small>Bei Sieg werden bis zu 90 % der zum Einschlag vorhandenen Rohstoffe erbeutet – begrenzt durch den Frachtraum der überlebenden Angriffsflotte.</small>' : ""}</article>`;
 }
 function mailboxEntries() {
   return [
@@ -1579,6 +1629,7 @@ async function sendPlayerMessage(form) {
 function render() {
   if (!state) return;
   setProtectedTexts([state.commander,...state.planets.map(p=>p.name),...galaxyIntel.flatMap(system=>system.slots.flatMap(slot=>[slot.name,slot.owner])),...playerSearchResults.map(player=>player.username)]);
+  document.documentElement.dataset.planetSkin = progression(state).skin;
   lastFullRender = Date.now();
   resourceTicker();
   $("#commander-name").textContent = state.commander;
@@ -1589,7 +1640,24 @@ function render() {
   $(".planet-card span:not(.eyebrow)").textContent = activePlanet().coordinates;
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
   const views = { overview: overviewView, buildings: buildingsView, research: researchView, career: careerView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, simulator: simulatorView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
+  const dailyExpanded = Boolean(content.querySelector(".daily-progress")?.open);
   content.innerHTML = (state.buildBoostUntil > Date.now() ? `<div class="boost-banner">⚡ Bauboost aktiv · ${formatDuration(state.buildBoostUntil - Date.now())} · 20× Tempo für Gebäude, Forschung und Schiffe</div>` : "") + views[activeView]();
+  const dailyPanel = content.querySelector(".daily-progress");
+  if (dailyPanel) dailyPanel.open = dailyExpanded;
+  if (lastAnimatedView !== activeView) {
+    content.classList.remove("view-enter");
+    void content.offsetWidth;
+    content.classList.add("view-enter");
+    lastAnimatedView = activeView;
+  }
+  if (liveCompletions) {
+    const count = liveCompletions; liveCompletions = 0;
+    $("#app").classList.remove("order-finished");
+    void $("#app").offsetWidth;
+    $("#app").classList.add("order-finished");
+    toast(`${count} Auftrag${count === 1 ? "" : "e"} abgeschlossen.`);
+  }
+  if (state.planets.length > 1) content.insertAdjacentHTML("afterbegin",`<nav class="mobile-planet-nav" aria-label="Planeten durchblättern"><button class="secondary-button" data-planet-step="-1" aria-label="Vorheriger Planet">←</button><span><strong>${escapeHtml(activePlanet().name)}</strong><small>Wischen zum Planetenwechsel</small></span><button class="secondary-button" data-planet-step="1" aria-label="Nächster Planet">→</button></nav>`);
   const messageField = content.querySelector('#message-compose textarea[name="body"]');
   if (messageField) messageField.value = messageBody;
   const unreadCount = mailboxEntries().filter(entry => entry.unread).length;
@@ -1826,7 +1894,7 @@ content.addEventListener("wheel", event => {
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
-  if (IS_DEMO && !["signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter","simulate","simReset","simReport"].some(key=>button.dataset[key]!==undefined)) {
+  if (IS_DEMO && !["planetStep","signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter","simulate","simReset","simReport"].some(key=>button.dataset[key]!==undefined)) {
     toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return;
   }
   if (button.dataset.playerSearch !== undefined) {
@@ -1898,6 +1966,15 @@ content.addEventListener("click", (event) => {
     cancelBuilding(Number(button.dataset.cancelBuilding));
     return;
   }
+  if (button.dataset.planetStep) {
+    if (actionBusy || isSaving) return;
+    const index=state.planets.findIndex(p=>p.id===activePlanet().id);
+    const next=state.planets[(index+Number(button.dataset.planetStep)+state.planets.length)%state.planets.length];
+    const select=$("#planet-switch"); select.value=next.id; select.dispatchEvent(new Event("change"));
+    return;
+  }
+  if (button.dataset.dailyClaim) { progressionAction("/api/progression/claim",{id:button.dataset.dailyClaim}); return; }
+  if (button.dataset.planetSkin) { progressionAction("/api/progression/skin",{skin:button.dataset.planetSkin}); return; }
   if (button.dataset.recycleTarget) { recycleTarget(button.dataset.recycleTarget); return; }
   if (button.dataset.selectCareer) {
     const path = button.dataset.selectCareer;
@@ -2087,3 +2164,20 @@ setInterval(() => {
 }, 1000);
 document.addEventListener("visibilitychange", () => { if (state && document.visibilityState === "hidden") save({ quiet: true }); });
 window.addEventListener("pagehide", () => { if (state) save({ quiet: true }); });
+
+let planetSwipe = null;
+content.addEventListener("touchstart", event => {
+  if (!state || state.planets.length < 2 || event.touches.length !== 1 || event.target.closest("input,textarea,select,button,a,dialog,.universe-map,.solar-orbits,.fleet-selector,table")) return;
+  const touch=event.touches[0];
+  planetSwipe={x:touch.clientX,y:touch.clientY,at:Date.now(),planetId:activePlanet().id};
+},{passive:true});
+content.addEventListener("touchcancel",()=>{planetSwipe=null;},{passive:true});
+content.addEventListener("touchend",event=>{
+  const start=planetSwipe; planetSwipe=null;
+  if (!start || !state || isSaving || actionBusy || !event.changedTouches.length || activePlanet().id!==start.planetId) return;
+  const touch=event.changedTouches[0],dx=touch.clientX-start.x,dy=touch.clientY-start.y;
+  if (Date.now()-start.at>700 || Math.abs(dx)<85 || Math.abs(dx)<Math.abs(dy)*2) return;
+  const index=state.planets.findIndex(p=>p.id===start.planetId);
+  const next=state.planets[(index+(dx<0?1:-1)+state.planets.length)%state.planets.length];
+  const select=$("#planet-switch"); select.value=next.id; select.dispatchEvent(new Event("change"));
+},{passive:true});

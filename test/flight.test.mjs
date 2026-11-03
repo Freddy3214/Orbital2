@@ -367,3 +367,24 @@ test("debris persists, competing recyclers share finite stock, delivery waits fo
   db=JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8"));
   assert.equal(db.accounts.recyclertarget.state.ships.recycler,1);
 });
+
+test("daily rewards and skins are server-owned and claims cannot be repeated",async()=>{
+ const signup=await api("/api/auth/register","POST",{username:"ProgressCommander",password:"secure1234"});
+ let client=(await api("/api/state","GET",undefined,signup.cookie)).payload.state;
+ client.progression={season:new Date().toISOString().slice(0,7),points:9999,unlocked:["aurora"],skin:"aurora"};
+ await api("/api/state","PUT",{state:client},signup.cookie);
+ client=(await api("/api/state","GET",undefined,signup.cookie)).payload.state;
+ assert.notEqual(client.progression?.points,9999);
+ const denied=await fetch(base+"/api/progression/skin",{method:"POST",headers:{"Content-Type":"application/json",Cookie:signup.cookie},body:JSON.stringify({skin:"aurora"})});
+ assert.equal(denied.status,400);
+ const db=JSON.parse(await readFile(process.env.ACCOUNT_FILE,"utf8")),day=new Date().toISOString().slice(0,10);
+ db.accounts.progresscommander.state.progression={season:day.slice(0,7),points:200,unlocked:[],skin:"classic",daily:{day,scanned:["a","b","c"],victory:0,salvage:0,claimed:[]}};
+ await writeFile(process.env.ACCOUNT_FILE,JSON.stringify(db),"utf8");
+ const claimed=(await api("/api/progression/claim","POST",{id:"scout"},signup.cookie)).payload.state;
+ assert.equal(claimed.progression.points,300);assert.ok(claimed.progression.unlocked.includes("aurora"));
+ const repeat=await fetch(base+"/api/progression/claim",{method:"POST",headers:{"Content-Type":"application/json",Cookie:signup.cookie},body:JSON.stringify({id:"scout"})});
+ assert.equal(repeat.status,400);
+ const skin=(await api("/api/progression/skin","POST",{skin:"aurora"},signup.cookie)).payload.state;
+ assert.equal(skin.progression.skin,"aurora");
+ for(const path of ["/manifest.webmanifest","/sw.js","/offline.html","/app-icon.svg"])assert.equal((await fetch(base+path)).status,200);
+});

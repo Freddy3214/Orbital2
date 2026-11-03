@@ -1,0 +1,20 @@
+{
+  "name": "Orbital Foundry",
+  "short_name": "Orbital Foundry",
+  "lang": "de",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#081018",
+  "theme_color": "#081018",
+  "description": "Dein Weltraumimperium unterwegs.",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

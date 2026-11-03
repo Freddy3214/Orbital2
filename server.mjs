@@ -1,3 +1,4 @@
+import { progression, recordProgress, claimProgress } from "./public/progression.js";
 import { createServer } from "node:http";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
@@ -45,7 +46,7 @@ function mutate(action) {
 function fail(message, status = 400) { throw Object.assign(new Error(message), { status }); }
 const mimeTypes = {
   ".css": "text/css; charset=utf-8", ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp",
+  ".webmanifest": "application/manifest+json; charset=utf-8", ".json": "application/json; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml", ".webp": "image/webp",
   ".txt": "text/plain; charset=utf-8", ".xml": "application/xml; charset=utf-8",
 };
 
@@ -338,6 +339,7 @@ async function updateAccountState(key, state) {
     warXp: Math.max(asWholeNumber(previous.state.career?.warXp), asWholeNumber(state.career?.warXp)),
     tradeXp: Math.max(asWholeNumber(previous.state.career?.tradeXp), asWholeNumber(state.career?.tradeXp)),
   };
+  state.progression = previous.state.progression || {};
   state.debrisFields = previous.state.debrisFields || {};
   state.buildBoostUntil = previous.state.buildBoostUntil || 0;
   state.buildBoostFrom = previous.state.buildBoostFrom || 0;
@@ -877,12 +879,15 @@ function settlePvpFlight(attacker, defender, flightId, now) {
           if (field) field[resource] = asWholeNumber(field[resource]) - amount;
           remaining -= amount;
         }
+        if (flight.loot.metal + flight.loot.crystal > 0) recordProgress(attacker.state,"salvage",flight.id,now);
         addNotification(attacker.state, "combat", "Bergungsbericht", `Trümmerfeld bei ${targetPlanet.name}: ${flight.loot.metal} Metall und ${flight.loot.crystal} Kristall geborgen. Lieferung nach Rückkehr.`);
       } else if (flight.kind === "spy") {
         const report = spyReportFor(attacker, target, flight.fleet.spyProbe);
+        recordProgress(attacker.state,"scout",signalId(target),now);
         flight.survivors = { spyProbe: Math.max(0, flight.fleet.spyProbe - report.lost) };
       } else {
         const result = prepareRaid(attacker, target, flight.fleet);
+        if (result.won) recordProgress(attacker.state,"victory",flight.id,now);
         flight.survivors = result.survivors;
         flight.loot = result.loot;
       }
@@ -1350,6 +1355,24 @@ const server = createServer(async (request, response) => {
       if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
       const body = await readBody(request);
       return json(response, 200, await mutate(() => colonizeSite(current.key, String(body.targetId || ""))));
+    }
+    if (request.method === "POST" && ["/api/progression/claim","/api/progression/skin"].includes(url.pathname)) {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response,401,{error:"Anmeldung erforderlich"});
+      const body = await readBody(request);
+      const result = await mutate(async()=>{
+        const account = await accountByKey(current.key);
+        if (url.pathname.endsWith("/claim")) claimProgress(account.state,String(body.id||""));
+        else {
+          const p = progression(account.state);
+          if (body.skin !== "classic" && !(body.skin==="aurora"&&p.unlocked.includes("aurora"))) fail("Planetendesign noch nicht freigeschaltet.");
+          p.skin=body.skin;
+        }
+        account.state.revision=asWholeNumber(account.state.revision)+1;
+        await persistAccountState(current.key,account.state);
+        return {state:account.state};
+      });
+      return json(response,200,result);
     }
     if (request.method === "POST" && url.pathname === "/api/flights/recall") {
       const current = await authenticatedAccount(request);

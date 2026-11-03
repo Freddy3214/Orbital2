@@ -177,3 +177,43 @@ body { background:#27251f; }.starfield { background:radial-gradient(ellipse at t
 .career-card .stat-line strong {text-align:right;color:var(--career-color)}
 .career-card button {width:100%;margin-top:12px;min-height:44px}
 @media(max-width:600px){.career-art{height:165px}.career-card .stat-line{font-size:12px}.career-card .panel-title{flex-wrap:wrap}}
+
+/* Game feel: animations run only on navigation or completed orders. */
+.view-enter {animation:view-enter .22s ease-out}
+@keyframes view-enter {from{opacity:.35;transform:translateY(7px)}to{opacity:1;transform:none}}
+#nav button,.secondary-button,.primary-button,.orbit-slot {transition:background-color .18s,border-color .18s,box-shadow .18s}
+.progress i {transition:width .65s linear;box-shadow:0 0 10px #d9b97866}
+.attack-imminent {border-color:#f97777!important;background:#611d2844!important}
+.hostile-countdown {font-variant-numeric:tabular-nums;color:#ffb0a6}
+.attack-imminent .hostile-countdown {animation:attack-warning 1.5s ease-in-out infinite}
+@keyframes attack-warning {50%{color:#fff; text-shadow:0 0 10px #ff526c}}
+.order-finished .resource-ticker {animation:completion-glow 1.4s ease-out}
+@keyframes completion-glow {30%{box-shadow:0 0 25px #75dfb688}100%{box-shadow:none}}
+.battle-visual {display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center;padding:20px;margin:16px 0;background:radial-gradient(ellipse at center,#31435577,#080d18);border:1px solid #c6a66c55;border-radius:12px}
+.battle-side {display:grid;gap:8px;min-width:0}.battle-side:last-of-type{text-align:right}
+.battle-side>span:not(.battle-ship),.battle-side small{font-size:12px;color:#bbc7d1}
+.battle-ship {font-size:34px;color:#8ad5d1;animation:battle-fly .65s ease-out}
+.battle-side:last-of-type .battle-ship{color:#efad90}
+@keyframes battle-fly {from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
+.battle-health {height:10px;border-radius:5px;overflow:hidden;background:#9b454566}
+.battle-health i {display:block;height:100%;width:var(--remaining);background:linear-gradient(90deg,#4bada5,#bbebbf);animation:battle-health .95s ease-out}
+@keyframes battle-health {from{width:100%}to{width:var(--remaining)}}
+.battle-impact {font-size:24px;color:#f1c787}
+.battle-visual>p {grid-column:1/-1;margin:4px 0 0;color:#9fadb9;font-size:11px}
+.offline-receipt {color:#f2e3c8;background:#111925;border:1px solid #b99a66;border-radius:16px;padding:26px;width:min(490px,calc(100vw - 32px));box-sizing:border-box}
+.offline-receipt::backdrop {background:#02060bbd}
+.offline-receipt p {line-height:1.6;color:#b8c7d1;font-size:13px}
+.receipt-resources {display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:24px 0}
+.receipt-resources>div{display:grid;gap:7px;justify-items:center;background:#ffffff06;padding:14px 4px;border-radius:8px}
+.receipt-resources span{font-size:12px}.offline-receipt button{width:100%}
+@media(max-width:600px){.content{padding:18px 12px 40px;overflow-x:hidden}.battle-visual{padding:12px;gap:8px}.battle-side strong{font-size:12px}.battle-side>span:not(.battle-ship){font-size:10px}.receipt-resources{gap:5px}.resource-ticker{font-variant-numeric:tabular-nums}.planet-switcher{min-width:0}}
+@media(prefers-reduced-motion:reduce){.view-enter,.attack-imminent .hostile-countdown,.order-finished .resource-ticker,.battle-ship,.battle-health i{animation:none!important}.progress i,#nav button,.secondary-button,.primary-button,.orbit-slot{transition:none!important}}
+
+.daily-progress{margin-bottom:18px}.daily-progress>p,.season-cosmetic p{color:#aab7c5;font-size:12px;line-height:1.6}
+.daily-goal{display:flex;align-items:center;gap:16px;justify-content:space-between;padding:13px 0;border-bottom:1px solid #ffffff12}.daily-goal>div{display:grid;gap:6px;flex:1}.daily-goal small{color:#b9c6cc;font-size:11px}.daily-goal progress{width:100%;height:7px;accent-color:#d3b579}.season-cosmetic{padding:16px 0 0}
+html[data-planet-skin="aurora"] .hero-planet-art,html[data-planet-skin="aurora"] .planet-portrait{box-shadow:0 0 0 2px #8fe5d6,0 0 26px #73ccb855;border-radius:50%}
+@media(max-width:600px){.daily-goal{flex-wrap:wrap}.daily-goal>div{min-width:180px}.daily-goal button{width:100%}}
+
+.daily-progress>summary{cursor:pointer;font-weight:700;padding:3px 0;min-height:24px}.daily-progress>summary small{float:right;font-weight:400;font-size:10px;color:#bdc7d0}.daily-progress[open]>summary{margin-bottom:14px}
+.mobile-planet-nav{display:none}
+@media(max-width:600px){.mobile-planet-nav{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px;padding:8px;background:#101925;border:1px solid #c8aa6b44;border-radius:9px}.mobile-planet-nav>span{display:grid;gap:4px;text-align:center;min-width:0}.mobile-planet-nav strong{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12px}.mobile-planet-nav small{font-size:10px;color:#aebbc8}.mobile-planet-nav button{min-width:44px;min-height:44px}}
