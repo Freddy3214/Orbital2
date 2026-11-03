@@ -765,7 +765,7 @@ async function fetchLeaderboard() {
     const response = await fetch("/api/leaderboard");
     if (!response.ok) return;
     leaderboard = await response.json();
-    if (["overview", "ranking"].includes(activeView)) render();
+    if (["overview", "ranking"].includes(activeView)) render({ live: true });
   } catch { /* The game remains usable when the leaderboard endpoint is unavailable. */ }
 }
 
@@ -790,7 +790,7 @@ async function fetchGalaxy({ force = false } = {}) {
   } catch { galaxyError = "Sensorverbindung unterbrochen. Erneut scannen.";
   } finally {
     galaxyLoading = false;
-    if (state && activeView === "galaxy" && !document.activeElement?.matches("[data-fleet-key]")) render();
+    if (state && activeView === "galaxy" && !mapGesture) render({ live: true });
   }
 }
 
@@ -937,6 +937,39 @@ async function logout() {
   setGateMode("login");
 }
 
+// Update countdowns without replacing images, buttons, scroll containers or listeners.
+function patchLiveContent(root, html) {
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const sameKind = (a, b) => a.nodeType === b.nodeType &&
+    (a.nodeType !== 1 || (a.localName === b.localName && a.namespaceURI === b.namespaceURI &&
+      a.getAttribute("id") === b.getAttribute("id")));
+  const sync = (parent, desired, top = false) => {
+    const current = [...parent.childNodes].filter(node => !top || node.nodeType !== 1 ||
+      !node.matches(".mobile-planet-nav,.demo-banner"));
+    desired.forEach((next, index) => {
+      const old = current[index];
+      if (!old) { parent.appendChild(next); return; }
+      if (!sameKind(old, next)) { parent.replaceChild(next, old); return; }
+      if (old.nodeType !== 1) {
+        if (old.nodeValue !== next.nodeValue) old.nodeValue = next.nodeValue;
+        return;
+      }
+      for (const attribute of [...old.attributes]) {
+        if (old.localName === "details" && attribute.name === "open") continue;
+        if (!next.hasAttribute(attribute.name)) old.removeAttribute(attribute.name);
+      }
+      for (const attribute of [...next.attributes]) {
+        if (old.getAttribute(attribute.name) !== attribute.value)
+          old.setAttribute(attribute.name, attribute.value);
+      }
+      sync(old, [...next.childNodes]);
+    });
+    for (const old of current.slice(desired.length)) old.remove();
+  };
+  sync(root, [...template.content.childNodes], true);
+}
+
 function resourceTicker() {
   const rate = production();
   const energy = energyStats();
@@ -945,7 +978,7 @@ function resourceTicker() {
     return `<div class="resource"><div class="resource-top"><span class="resource-label">${resourceIconMarkup(key, "resource-icon--ticker")}<span>${label}</span></span><span class="positive">+${formatNumber(rate[key])}/h</span></div><strong>${formatNumber(state.resources[key])} <small>/ ${formatNumber(cap)}</small></strong></div>`;
   });
   blocks.push(`<div class="resource"><div class="resource-top"><span>Energie</span><span class="${energy.net >= 0 ? "positive" : "warning"}">${energy.net >= 0 ? "stabil" : "Defizit"}</span></div><strong>${formatNumber(energy.supply)} <small>/ ${formatNumber(energy.demand)}</small></strong></div>`);
-  $("#resource-ticker").innerHTML = blocks.join("");
+  patchLiveContent($("#resource-ticker"), blocks.join(""));
 }
 
 function orderSchedule(orders, kind, now=Date.now()) {
@@ -1644,8 +1677,12 @@ async function sendPlayerMessage(form) {
   } catch (error) { toast(error.message || "Nachricht konnte nicht gesendet werden.", true);
   } finally { actionBusy = false; }
 }
-function render() {
+function render({ live = false } = {}) {
   if (!state) return;
+  if (live && (document.activeElement?.matches("input, textarea, select, [contenteditable='true']") || window.getSelection?.().toString())) {
+    resourceTicker();
+    return;
+  }
   setProtectedTexts([state.commander,...state.planets.map(p=>p.name),...galaxyIntel.flatMap(system=>system.slots.flatMap(slot=>[slot.name,slot.owner])),...playerSearchResults.map(player=>player.username)]);
   document.documentElement.dataset.planetSkin = progression(state).skin;
   lastFullRender = Date.now();
@@ -1659,7 +1696,9 @@ function render() {
   $$("#nav button").forEach((button) => button.classList.toggle("active", button.dataset.view === activeView));
   const views = { overview: overviewView, buildings: buildingsView, research: researchView, career: careerView, shipyard: shipyardView, defense: defenseView, galaxy: galaxyView, messages: messagesView, players: playersView, log: logView, economy: economyView, fleets: fleetsView, simulator: simulatorView, ranking: rankingView, statistics: statisticsView, techtree: techtreeView, help: helpView };
   const dailyExpanded = Boolean(content.querySelector(".daily-progress")?.open);
-  content.innerHTML = (state.buildBoostUntil > Date.now() ? `<div class="boost-banner">⚡ Bauboost aktiv · ${formatDuration(state.buildBoostUntil - Date.now())} · 20× Tempo für Gebäude, Forschung und Schiffe</div>` : "") + views[activeView]();
+  const nextContent = (state.buildBoostUntil > Date.now() ? `<div class="boost-banner">⚡ Bauboost aktiv · ${formatDuration(state.buildBoostUntil - Date.now())} · 20× Tempo für Gebäude, Forschung und Schiffe</div>` : "") + views[activeView]();
+  if (live) patchLiveContent(content, nextContent);
+  else content.innerHTML = nextContent;
   const dailyPanel = content.querySelector(".daily-progress");
   if (dailyPanel) dailyPanel.open = dailyExpanded;
   if (lastAnimatedView !== activeView) {
@@ -1675,14 +1714,14 @@ function render() {
     $("#app").classList.add("order-finished");
     toast(`${count} Auftrag${count === 1 ? "" : "e"} abgeschlossen.`);
   }
-  if (state.planets.length > 1) content.insertAdjacentHTML("afterbegin",`<nav class="mobile-planet-nav" aria-label="Planeten durchblättern"><button class="secondary-button" data-planet-step="-1" aria-label="Vorheriger Planet">←</button><span><strong>${escapeHtml(activePlanet().name)}</strong><small>Wischen zum Planetenwechsel</small></span><button class="secondary-button" data-planet-step="1" aria-label="Nächster Planet">→</button></nav>`);
+  if (state.planets.length > 1 && !content.querySelector(".mobile-planet-nav")) content.insertAdjacentHTML("afterbegin",`<nav class="mobile-planet-nav" aria-label="Planeten durchblättern"><button class="secondary-button" data-planet-step="-1" aria-label="Vorheriger Planet">←</button><span><strong>${escapeHtml(activePlanet().name)}</strong><small>Wischen zum Planetenwechsel</small></span><button class="secondary-button" data-planet-step="1" aria-label="Nächster Planet">→</button></nav>`);
   const messageField = content.querySelector('#message-compose textarea[name="body"]');
   if (messageField) messageField.value = messageBody;
   const unreadCount = mailboxEntries().filter(entry => entry.unread).length;
   const messageNav = document.querySelector('#nav [data-view="messages"]');
   if (messageNav) messageNav.innerHTML = `<span>✉</span> Nachrichten${unreadCount ? ` (${unreadCount})` : ""}`;
   if (IS_DEMO) {
-    content.insertAdjacentHTML("afterbegin",'<div class="demo-banner"><strong>DEMO · Beispielimperium</strong><span>Nur ansehen · Kein echter Spielstand · Keine Speicherung</span><a href="/">Eigenes Imperium starten →</a></div>');
+    if (!content.querySelector(".demo-banner")) content.insertAdjacentHTML("afterbegin",'<div class="demo-banner"><strong>DEMO · Beispielimperium</strong><span>Nur ansehen · Kein echter Spielstand · Keine Speicherung</span><a href="/">Eigenes Imperium starten →</a></div>');
     content.querySelectorAll("[data-build],[data-build-batch],[data-research],[data-ship],[data-mission],[data-colonize],[data-spy-target],[data-raid-target],[data-start-transfer]").forEach(button=>button.disabled=true);
   }
   translateDOM();
@@ -2154,7 +2193,7 @@ document.addEventListener("orbital-language-change", () => { if (state) render()
 initLanguage();
 restoreSession();
 setInterval(() => {
-  if (!state || actionBusy || isSaving) return;
+  if (!state || actionBusy || isSaving || document.visibilityState === "hidden") return;
   synchronize();
   const activeElement = document.activeElement;
   const editingText = activeElement?.matches("input, textarea, select, [contenteditable='true']");
@@ -2178,7 +2217,7 @@ setInterval(() => {
       }
     }
     const liveCountdownView = ["overview", "buildings", "research", "shipyard", "defense", "fleets"].includes(activeView);
-    if (!editingText && !selectingText && activeView !== "messages" && (liveCountdownView || Date.now() - lastFullRender >= 5_000)) render();
+    if (!editingText && !selectingText && activeView !== "messages" && (liveCountdownView || Date.now() - lastFullRender >= 5_000)) render({ live: true });
   }
   if (Date.now() - lastAutoSave >= 15_000) {
     lastAutoSave = Date.now();
@@ -2187,7 +2226,11 @@ setInterval(() => {
   if (activeView === "overview") fetchLeaderboard();
   if (activeView === "galaxy") fetchGalaxy();
 }, 1000);
-document.addEventListener("visibilitychange", () => { if (state && document.visibilityState === "hidden") save({ quiet: true }); });
+document.addEventListener("visibilitychange", () => {
+  if (!state) return;
+  if (document.visibilityState === "hidden") save({ quiet: true });
+  else if (!actionBusy && !isSaving) { synchronize(); render({ live: true }); }
+});
 window.addEventListener("pagehide", () => { if (state) save({ quiet: true }); });
 
 let planetSwipe = null;
