@@ -12,6 +12,7 @@ import { simulateBattle } from "./public/combat.js";
 import { requestLocale } from "./locale.mjs";
 import {atomicJsonWriter} from "./storage.mjs";
 import {parseCookies,readJsonBody,createRequestGuard} from "./request-safety.mjs";
+import { createAnalytics } from "./analytics.mjs";
 
 const rawScrypt = promisify(scryptCallback);
 let passwordJobs=0;
@@ -289,6 +290,7 @@ async function initializeStorage() {
   `);
 }
 const storageReady = initializeStorage();
+const analytics = createAnalytics({ pool, filePath: process.env.ANALYTICS_FILE || join(root, "data", "traffic.json"), getAccounts: allAccounts });
 async function applyLordFredoCredit() {
   if (process.env.APPLY_LORD_FREDO_CREDIT !== "yes") return;
   await mutate(async () => {
@@ -1165,13 +1167,20 @@ const server = createServer(async (request, response) => {
     let url;try{url=new URL(request.url, `http://${request.headers.host || "localhost"}`);}catch{fail("Ungültige Adresse.",400);}
     requestGuard(request,url);
     await storageReady;
-    if (url.pathname.startsWith("/api/") && !url.pathname.startsWith("/api/demo") && url.pathname !== "/api/locale") await sweepFlights();
+    if (url.pathname.startsWith("/api/") && !url.pathname.startsWith("/api/demo") && !url.pathname.startsWith("/api/analytics/") && url.pathname !== "/api/locale") await sweepFlights();
     if (request.method === "GET" && url.pathname === "/health") {
       return json(response, 200, { ok: true, storage: pool ? "postgres" : "file" });
     }
     if (request.method === "GET" && url.pathname === "/api/locale") {
       response.setHeader("Cache-Control", "private, no-store");
       return json(response, 200, requestLocale(request));
+    }
+    if (request.method === "POST" && url.pathname === "/api/analytics/visit") {
+      const recorded = await analytics.recordVisit(await readJsonBody(request, 2048));
+      return json(response, 200, { ok: true, recorded });
+    }
+    if (request.method === "GET" && url.pathname === "/api/analytics/summary") {
+      return json(response, 200, await analytics.summary(url.searchParams.get("days")));
     }
     if (request.method === "GET" && url.pathname === "/api/demo") {
       return json(response,200,{demo:true,user:{username:"Demo Commander"},state:demoAccount().state,capabilities:{testGrant:false}});

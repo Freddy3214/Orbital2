@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Reichweite · Orbital Foundry</title>
+  <style>
+    :root{color-scheme:dark;font:16px system-ui,sans-serif;background:#111920;color:#f4efe2}
+    *{box-sizing:border-box}body{margin:0;padding:clamp(18px,4vw,52px);max-width:1050px;margin-inline:auto}
+    a{color:#f1c783}header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+    h1{margin:20px 0 5px;font-size:clamp(28px,5vw,42px)}h2{font-size:20px;margin:0 0 14px}
+    p{color:#bac9ce;line-height:1.55}.small{font-size:14px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;margin:26px 0}
+    .card,.panel{border:1px solid #756b54;background:linear-gradient(145deg,#252f33,#192127);border-radius:16px;padding:20px;box-shadow:0 10px 30px #0004}
+    .card strong{display:block;font-size:36px;color:#f8d08e}.card span{color:#c1cccd;font-size:14px}
+    .grid{display:grid;grid-template-columns:1fr 1.3fr;gap:14px}@media(max-width:700px){.grid{grid-template-columns:1fr}}
+    table{border-collapse:collapse;width:100%}th,td{padding:11px 6px;border-bottom:1px solid #465156;text-align:left}th:last-child,td:last-child{text-align:right}
+    .bars{display:flex;align-items:end;gap:5px;height:180px;padding:10px 2px 0;border-bottom:1px solid #748183}.bar{flex:1;min-width:4px;background:linear-gradient(#f8d08e,#b97d37);border-radius:4px 4px 0 0;min-height:2px}.legend{display:flex;justify-content:space-between;margin-top:10px;color:#aebec1;font-size:12px}
+    select{background:#27343a;color:#f4efe2;border:1px solid #756b54;border-radius:8px;padding:9px}#error{color:#ffae9b}
+  </style>
+</head>
+<body>
+  <header><a href="/">← Zum Spiel</a><label>Zeitraum <select id="days"><option value="7">7 Tage</option><option value="30" selected>30 Tage</option><option value="90">90 Tage</option></select></label></header>
+  <h1>Reichweite</h1>
+  <p>Besuche, Herkunft und neue Accounts von Orbital Foundry. Die Besuchsmessung beginnt erst mit dem Einbau dieses Zählers.</p>
+  <div class="cards">
+    <div class="card"><strong id="visits">–</strong><span>Gezählte Browser-Sitzungen</span></div>
+    <div class="card"><strong id="signups">–</strong><span>Neue Accounts seit Messbeginn im Zeitraum</span></div>
+    <div class="card"><strong id="accounts">–</strong><span>Spielerkonten insgesamt (ohne NPCs)</span></div>
+  </div>
+  <div class="grid">
+    <section class="panel"><h2>Herkunft der Besuche</h2><table><thead><tr><th>Quelle</th><th>Sitzungen</th></tr></thead><tbody id="sources"></tbody></table></section>
+    <section class="panel"><h2>Besuche pro Tag</h2><div class="bars" id="bars" role="img" aria-label="Besuche pro Tag"></div><div class="legend"><span id="first-day"></span><span id="last-day"></span></div></section>
+  </div>
+  <p class="small" id="note"></p><p id="error" role="alert"></p>
+  <script type="module" src="/reichweite.js?v=1"></script>
+</body>
+</html>
+
