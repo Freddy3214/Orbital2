@@ -46,7 +46,8 @@
     <link rel="stylesheet" href="/themes.css?v=20261003" />
   <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
-  </head>
+  <style>.gate-visitor-count{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin:12px 0 18px;padding:10px 14px;border:1px solid #b4a17a;border-radius:12px;background:linear-gradient(120deg,#3e392f,#242821);color:#ebd6aa;font-size:12px;text-align:center}.gate-visitor-count>strong{font-size:22px;color:#ffe2a4}.gate-visitor-count span strong{font-size:inherit;color:#ffe2a4}</style>
+</head>
   <body>
     <div class="starfield" aria-hidden="true"></div>
     <div id="app" class="app-shell is-hidden">
@@ -104,6 +105,7 @@
       <section class="gate-card">
         <label class="gate-language">Sprache / Language<select data-language-switch aria-label="Language / Sprache"><option value="de">Deutsch</option><option value="en">English</option></select></label>
         <div class="gate-logo">OF</div>
+        <div class="gate-visitor-count" role="status" aria-live="polite"><span>Besucher der letzten 30 Tage</span><strong data-unique-ip-count>–</strong><span>verschiedene IP-Adressen · <strong data-visit-count>–</strong> Besuche</span></div>
         <div class="auth-switch" role="tablist" aria-label="Zugang auswählen"><button class="active" data-auth-mode="register" role="tab">Registrieren</button><button data-auth-mode="login" role="tab">Anmelden</button></div>
         <p class="eyebrow" id="gate-eyebrow">NEUER KOMMANDOKANAL</p>
         <h1 id="gate-title">Deine erste Welt wartet.</h1>
@@ -121,7 +123,7 @@
         <small data-share-status role="status" aria-live="polite"></small>
       </section>
     </div>
-  <script type="module" src="/analytics.js?v=1"></script>
+  <script type="module" src="/analytics.js?v=2"></script>
     <script type="module" src="/app.js?v=20261103-fluidity-1"></script>
     <script type="module" src="/promo.js?v=20261017"></script>
   <script type="module" src="/pwa.js?v=1"></script>

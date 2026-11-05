@@ -197,7 +197,7 @@ function applyNpcWorld(accounts, now, allowActions = true) {
     const candidates = humans.filter(player => {
       if (now-player.createdAt < 24*NPC_HOUR) return false;
       if ((player.state.incomingFlights || []).some(flight=>flight.npc)) return false;
-      if (now-asWholeNumber(player.state[spy ? "npcLastSpyAt" : "npcLastRaidAt"]) < (spy ? NPC_HOUR : 6*NPC_HOUR)) return false;
+      if (now-asWholeNumber(player.state[spy ? "npcLastSpyAt" : "npcLastRaidAt"]) < (spy ? NPC_HOUR : 24*NPC_HOUR)) return false;
       const target = primaryPlanet(player);
       if (galaxyDistance(galaxyPosition(npc),galaxyPosition(player)) > 60) return false;
       if (spy) return true;
@@ -214,7 +214,7 @@ function applyNpcWorld(accounts, now, allowActions = true) {
     const flight = launchPvpAction(npc,target,primaryPlanet(target).id,fleet,spy,now);
     target.state[spy ? "npcLastSpyAt" : "npcLastRaidAt"] = now;
     meta.nextKind = spy ? "raid" : "spy";
-    meta.nextActionAt = flight.returnAt + (spy ? 5*60_000 : 2*NPC_HOUR);
+    meta.nextActionAt = flight.returnAt + (spy ? 5*60_000 : 24*NPC_HOUR);
     changed.add(target);
   }
   return changed;
@@ -290,7 +290,7 @@ async function initializeStorage() {
   `);
 }
 const storageReady = initializeStorage();
-const analytics = createAnalytics({ pool, filePath: process.env.ANALYTICS_FILE || join(root, "data", "traffic.json"), getAccounts: allAccounts });
+const analytics = createAnalytics({ pool, filePath: process.env.ANALYTICS_FILE || join(root, "data", "traffic.json"), getAccounts: allAccounts, ipHashKey: process.env.ANALYTICS_HASH_KEY || "" });
 async function applyLordFredoCredit() {
   if (process.env.APPLY_LORD_FREDO_CREDIT !== "yes") return;
   await mutate(async () => {
@@ -1176,7 +1176,7 @@ const server = createServer(async (request, response) => {
       return json(response, 200, requestLocale(request));
     }
     if (request.method === "POST" && url.pathname === "/api/analytics/visit") {
-      const recorded = await analytics.recordVisit(await readJsonBody(request, 2048));
+      const recorded = await analytics.recordVisit(await readJsonBody(request, 2048), request);
       return json(response, 200, { ok: true, recorded });
     }
     if (request.method === "GET" && url.pathname === "/api/analytics/summary") {

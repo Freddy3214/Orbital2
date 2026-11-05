@@ -6,6 +6,7 @@ async function refresh() {
     const response = await fetch(`/api/analytics/summary?days=${$('days').value}`, { cache: 'no-store' });
     if (!response.ok) throw new Error('Die Statistik konnte nicht geladen werden.');
     const data = await response.json();
+    $('unique-ips').textContent = number(data.uniqueIps);
     $('visits').textContent = number(data.visits);
     $('signups').textContent = number(data.signups);
     $('accounts').textContent = number(data.totalAccounts);
@@ -39,9 +40,9 @@ async function refresh() {
     $('first-day').textContent = data.daily[0]?.date || '';
     $('last-day').textContent = data.daily.at(-1)?.date || '';
     const start = data.countingSince ? new Date(data.countingSince).toLocaleString('de-DE') : 'noch keine Besuche';
-    $('note').textContent = `Messbeginn: ${start}. Stand: ${new Date(data.updatedAt).toLocaleString('de-DE')}. Ein Besuch zählt pro Browser-Tab einmal; er ist keine eindeutige Person. Registrierungen werden keiner einzelnen Quelle zugeordnet. Keine IP-Adressen oder Spielernamen im Besuchsprotokoll.`;
+    const ipStart = data.ipCountingSince ? new Date(data.ipCountingSince).toLocaleString('de-DE') : 'noch keine IPs erfasst';
+    $('note').textContent = `Messbeginn: ${start}. IP-Zählung seit: ${ipStart}. Stand: ${new Date(data.updatedAt).toLocaleString('de-DE')}. Ein Besuch zählt pro Browser-Tab einmal. Verschiedene IPs sind keine eindeutigen Personen; mehrere Menschen können eine IP teilen. IPs werden nur als Kennung gespeichert und Besuchsdaten nach spätestens 90 Tagen entfernt. Registrierungen werden keiner einzelnen Quelle zugeordnet.`;
   } catch (error) { $('error').textContent = error.message; }
 }
 $('days').addEventListener('change', refresh);
 refresh();
-
