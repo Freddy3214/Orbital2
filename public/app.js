@@ -1,7 +1,7 @@
 import { DAILY_GOALS, progression } from "./progression.js?v=20261103";
 import { FLEET, DEFENSE, shipCargo, fleetCapacity, flightFuel, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261103-cargo-fuel-1";
 import { simulateBattle } from "./combat.js?v=20261103-cargo-fuel-1";
-import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261115-events";
+import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261115-events-2";
 const IS_DEMO = location.pathname === "/demo";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -811,7 +811,8 @@ async function fetchEvents({ force = false } = {}) {
       ensureStateShape();
       stateUpdated = true;
     }
-    if (activeView === "events" || (stateUpdated && ["overview", "fleets"].includes(activeView))) render({ live: true });
+    const editingEventFleet = document.activeElement?.matches?.("[data-event-recyclers], [data-event-ship]");
+    if (!editingEventFleet && (activeView === "events" || (stateUpdated && ["overview", "fleets"].includes(activeView)))) render({ live: true });
   } catch {
     if (activeView === "events") toast("Ereignisfunk nicht verfügbar.", true);
   }
@@ -1552,7 +1553,7 @@ function galaxyView() {
   }).join("");
   return `<section class="view-heading"><div><span class="eyebrow">STERNENKARTOGRAFIE</span><h1>Sternenkarte</h1><p>Dein Imperium im Überblick. Jede eigene Welt erschließt einen eigenen Sichtkreis.</p></div><span class="sector-label">SENSORIK ${state.research.deepSpaceSensors} · ${galaxyRadius.toFixed(1)} SEKTOREN</span></section>
   <div class="map-legend"><span><i class="legend-home"></i> Eigene Welten</span><span><i class="legend-star"></i> Sternsystem · anklicken</span><span><i class="legend-range"></i> Sensorreichweite ${galaxyRadius.toFixed(1)}</span><span>Schwarz: erforscht · Grau: unbekannt · Sichtkreise überlappen sich</span></div>
-  <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="empire">Ganzes Imperium</button><button class="secondary-button" data-map-action="home">Aktive Welt</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button></div></div>
+  <div class="galaxy-toolbar"><div><button class="secondary-button" data-map-action="left" aria-label="Karte nach links">←</button><button class="secondary-button" data-map-action="up" aria-label="Karte nach oben">↑</button><button class="secondary-button" data-map-action="down" aria-label="Karte nach unten">↓</button><button class="secondary-button" data-map-action="right" aria-label="Karte nach rechts">→</button></div><div><button class="secondary-button" data-map-action="out" aria-label="Verkleinern">−</button><span>${galaxyZoom.toFixed(1)}×</span><button class="secondary-button" data-map-action="in" aria-label="Vergrößern">+</button><button class="secondary-button" data-map-action="empire">Ganzes Imperium</button><button class="secondary-button" data-map-action="home">Aktive Welt</button><button class="secondary-button" data-map-action="refresh">Sensoren aktualisieren</button><button class="secondary-button" data-view-jump="events">☄ Ereignisse</button></div></div>
   <div class="colony-nav" aria-label="Eigene Sichtkreise">${origins.map(o => `<button class="secondary-button ${o.active ? "active" : ""}" data-sensor-focus="${escapeHtml(o.planetId)}"><i></i>${escapeHtml(o.name)}<small>${galaxyCoordinates(o.position)}</small></button>`).join("")}</div>
   ${galaxyError ? `<div class="tip">${escapeHtml(galaxyError)}</div>` : ""}
   <div class="galaxy-layout"><section class="universe-map" aria-label="Galaxiekarte">${space}${markers}${colonyMarkers}<div class="map-caption">X ${center.x.toFixed(0)} · Y ${center.y.toFixed(0)} · ${galaxyIntel.length} SYSTEME · KARTENRAUM ${galaxySpan} × ${galaxySpan}<small>Ziehen zum Verschieben · Mausrad zum Zoomen · Stern anklicken, dann eine Position 1–13 wählen.</small></div></section>${galaxyInspector()}</div>
