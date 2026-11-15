@@ -13,6 +13,7 @@ import { requestLocale } from "./locale.mjs";
 import {atomicJsonWriter} from "./storage.mjs";
 import {parseCookies,readJsonBody,createRequestGuard} from "./request-safety.mjs";
 import { createAnalytics } from "./analytics.mjs";
+import { createEventWorld, refreshEventWorld, publicEventWorld, startEventFlight, settleEventFlights } from "./galaxy-events.mjs";
 
 const rawScrypt = promisify(scryptCallback);
 let passwordJobs=0;
@@ -81,7 +82,7 @@ const defaultState = (commander, position) => {
     buildings, resources, productionLoad: { metal: 100, crystal: 100, tritium: 100 }, buildingQueue: [], shipQueue: null, defenses: {},
   }],
   career: { path: null, warXp: 0, tradeXp: 0 },
-  queues: { building: [], research: null, ship: null }, missions: [], pvpFlights: [], incomingFlights: [], spyReports: [], combatReports: [], messages: [], notifications: [],
+  queues: { building: [], research: null, ship: null }, missions: [], pvpFlights: [], eventFlights: [], eventReports: [], incomingFlights: [], spyReports: [], combatReports: [], messages: [], notifications: [],
   log: [{ at: now, type: "system", text: "Kommandozentrale verbunden. Deine Heimatwelt wartet auf Befehle." }],
   });
 };
@@ -291,6 +292,63 @@ async function initializeStorage() {
 }
 const storageReady = initializeStorage();
 const analytics = createAnalytics({ pool, filePath: process.env.ANALYTICS_FILE || join(root, "data", "traffic.json"), getAccounts: allAccounts, ipHashKey: process.env.ANALYTICS_HASH_KEY || "" });
+const eventFile = process.env.EVENT_FILE || join(dirname(accountFile), "galaxy-events.json");
+const writeEventFile = atomicJsonWriter(eventFile);
+let localEventWorld = null;
+const eventsReady = (async () => {
+  await storageReady;
+  if (pool) {
+    await pool.query("CREATE TABLE IF NOT EXISTS galaxy_event_world (id TEXT PRIMARY KEY, state JSONB NOT NULL)");
+    await pool.query("INSERT INTO galaxy_event_world (id, state) VALUES ('main', $1::jsonb) ON CONFLICT (id) DO NOTHING", [JSON.stringify(createEventWorld())]);
+  } else {
+    try { localEventWorld = JSON.parse(await readFile(eventFile, "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (!localEventWorld) { localEventWorld = createEventWorld(); await writeEventFile(localEventWorld); }
+  }
+})();
+async function withEventAccount(key, action = () => ({})) {
+  await eventsReady;
+  if (pool) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const accountResult = await client.query("SELECT * FROM accounts WHERE account_key = $1 FOR UPDATE", [key]);
+      if (!accountResult.rows[0]) fail("Anmeldung erforderlich.", 401);
+      const worldResult = await client.query("SELECT state FROM galaxy_event_world WHERE id = 'main' FOR UPDATE");
+      const account = accountFromRow(accountResult.rows[0]);
+      const world = worldResult.rows[0].state;
+      const now = Date.now();
+      settleEventFlights(account, world, now);
+      refreshEventWorld(world, now);
+      const result = await action(account, world, now);
+      await client.query("UPDATE galaxy_event_world SET state = $1::jsonb WHERE id = 'main'", [JSON.stringify(world)]);
+      await client.query("UPDATE accounts SET state = $2::jsonb WHERE account_key = $1", [key, JSON.stringify(account.state)]);
+      await client.query("COMMIT");
+      return { ...result, state: account.state, events: publicEventWorld(world, now) };
+    } catch (error) { await client.query("ROLLBACK"); throw error; }
+    finally { client.release(); }
+  }
+  const database = await loadLocalDatabase();
+  const account = database.accounts[key];
+  if (!account) fail("Anmeldung erforderlich.", 401);
+  const now = Date.now();
+  settleEventFlights(account, localEventWorld, now);
+  refreshEventWorld(localEventWorld, now);
+  const result = await action(account, localEventWorld, now);
+  await saveLocalDatabase(database);
+  await writeEventFile(localEventWorld);
+  return { ...result, state: account.state, events: publicEventWorld(localEventWorld, now) };
+}
+async function resolveDueEventFlights(now = Date.now()) {
+  await eventsReady;
+  const accounts = pool
+    ? (await pool.query("SELECT account_key, state FROM accounts WHERE CASE WHEN jsonb_typeof(state->'eventFlights') = 'array' THEN jsonb_array_length(state->'eventFlights') ELSE 0 END > 0")).rows
+    : Object.entries((await loadLocalDatabase()).accounts).map(([account_key, account]) => ({ account_key, state: account.state }));
+  for (const account of accounts) {
+    if (!account.state.eventFlights?.some(flight => (flight.phase === "outgoing" ? flight.arrivesAt : flight.returnAt) <= now)) continue;
+    await withEventAccount(account.account_key);
+  }
+}
 async function applyLordFredoCredit() {
   if (process.env.APPLY_LORD_FREDO_CREDIT !== "yes") return;
   await mutate(async () => {
@@ -352,6 +410,8 @@ async function updateAccountState(key, state) {
   delete state.npc;
   // Flight manifests and inbound warnings are server-owned; clients may not forge or erase them.
   state.pvpFlights = previous.state.pvpFlights || [];
+  state.eventFlights = previous.state.eventFlights || [];
+  state.eventReports = previous.state.eventReports || [];
   state.incomingFlights = previous.state.incomingFlights || [];
   const readMessageIds = new Set((state.messages || []).filter(message => message.read === true).map(message => message.id));
   state.messages = (previous.state.messages || [])
@@ -960,6 +1020,7 @@ async function sweepFlights() {
   lastFlightSweep = Date.now();
   await mutate(async () => {
     await resolveDuePvpFlights();
+    await resolveDueEventFlights();
     if (Date.now()-lastNpcSweep >= 60_000) {
       await advanceNpcWorld();
       lastNpcSweep = Date.now();
@@ -1182,6 +1243,26 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/analytics/summary") {
       return json(response, 200, await analytics.summary(url.searchParams.get("days")));
     }
+    if (request.method === "GET" && url.pathname === "/api/events/status") {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const result = await mutate(() => withEventAccount(current.key));
+      return json(response, 200, { ...result.events, state: result.state });
+    }
+    if (request.method === "POST" && ["/api/events/harvest", "/api/events/boss"].includes(url.pathname)) {
+      const current = await authenticatedAccount(request);
+      if (!current) return json(response, 401, { error: "Anmeldung erforderlich" });
+      const body = await readBody(request);
+      const result = await mutate(() => withEventAccount(current.key, (account, world, now) => ({
+        flight: startEventFlight(account, world, {
+          kind: url.pathname.endsWith("/harvest") ? "harvest" : "boss",
+          eventId: String(body.eventId || ""),
+          recyclerCount: body.recyclerCount,
+          fleet: body.fleet,
+        }, galaxyPosition(activeGalaxyAccount(account)), now),
+      })));
+      return json(response, 200, { state: result.state, flight: result.flight, events: result.events });
+    }
     if (request.method === "GET" && url.pathname === "/api/demo") {
       return json(response,200,{demo:true,user:{username:"Demo Commander"},state:demoAccount().state,capabilities:{testGrant:false}});
     }
@@ -1220,7 +1301,8 @@ const server = createServer(async (request, response) => {
       const account = key && await accountByKey(key);
       if (!account || npcConfig(account) || !(await passwordMatches(password, account.password))) return json(response, 401, { error: "Name oder Passwort ist nicht korrekt." });
       issueSession(response, key);
-      return json(response, 200, { user: publicAccount(account), state: account.state, capabilities: { testGrant: hasTestGrantAccess(account) } });
+      const liveAccount = await mutate(() => withEventAccount(key));
+      return json(response, 200, { user: publicAccount(account), state: liveAccount.state, capabilities: { testGrant: hasTestGrantAccess(account) } });
     }
     if (request.method === "POST" && url.pathname === "/api/auth/logout") {
       clearSession(request, response);
@@ -1229,7 +1311,8 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/session") {
       const current = await authenticatedAccount(request);
       if (!current) return json(response, 401, { error: "No active session" });
-      return json(response, 200, { user: publicAccount(current.account), state: current.account.state, capabilities: { testGrant: hasTestGrantAccess(current.account) } });
+      const liveAccount = await mutate(() => withEventAccount(current.key));
+      return json(response, 200, { user: publicAccount(current.account), state: liveAccount.state, capabilities: { testGrant: hasTestGrantAccess(current.account) } });
     }
     if (request.method === "GET" && url.pathname === "/api/state") {
       const current = await authenticatedAccount(request);
@@ -1477,6 +1560,7 @@ export { server, resolveDuePvpFlights, advanceNpcWorld };
 storageReady.then(async () => {
   await applyLordFredoCredit();
   await mutate(()=>advanceNpcWorld(Date.now(),false));
+  await eventsReady;
   server.listen(port, process.env.HOST || "0.0.0.0", () => console.log(`Orbital Foundry is live at http://localhost:${port}`));
 }).catch((error) => {
   console.error("Database initialization failed", error);
