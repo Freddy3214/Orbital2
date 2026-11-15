@@ -909,6 +909,7 @@ function setGateMode(mode) {
   $("#gate-eyebrow").textContent = login ? "RÜCKKEHR ZUM KOMMANDOKANAL" : "NEUER KOMMANDOKANAL";
   $("#gate-title").textContent = login ? "Willkommen zurück." : "Deine erste Welt wartet.";
   $("#gate-copy").textContent = login ? "Melde dich an und führe deinen gespeicherten Spielstand fort." : "Lege einen Kommandantenaccount an. Dein Fortschritt bleibt auf dem Spielserver gespeichert.";
+  $("#gate-start-bonus").hidden = login;
   $("#start-button").innerHTML = login ? "Anmelden <span>→</span>" : "Account erstellen <span>→</span>";
   $("#password-input").autocomplete = login ? "current-password" : "new-password";
 }
