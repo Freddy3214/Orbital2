@@ -805,11 +805,13 @@ async function fetchEvents({ force = false } = {}) {
     if (!response.ok) throw new Error("Ereignisfunk nicht verfügbar.");
     const payload = await response.json();
     galaxyEvents = payload;
+    let stateUpdated = false;
     if (payload.state && Number(payload.state.revision) > Number(state.revision) && !isSaving && !actionBusy) {
       state = payload.state;
       ensureStateShape();
+      stateUpdated = true;
     }
-    if (activeView === "events") render({ live: true });
+    if (activeView === "events" || (stateUpdated && ["overview", "fleets"].includes(activeView))) render({ live: true });
   } catch {
     if (activeView === "events") toast("Ereignisfunk nicht verfügbar.", true);
   }
@@ -2298,7 +2300,7 @@ setInterval(() => {
   }
   if (activeView === "overview") fetchLeaderboard();
   if (activeView === "galaxy") fetchGalaxy();
-  if (activeView === "events") fetchEvents();
+  if (activeView === "events" || state.eventFlights?.length) fetchEvents();
 }, 1000);
 document.addEventListener("visibilitychange", () => {
   if (!state) return;
