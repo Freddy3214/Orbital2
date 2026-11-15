@@ -1,7 +1,7 @@
 import { DAILY_GOALS, progression } from "./progression.js?v=20261103";
 import { FLEET, DEFENSE, shipCargo, fleetCapacity, flightFuel, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261103-cargo-fuel-1";
 import { simulateBattle } from "./combat.js?v=20261103-cargo-fuel-1";
-import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js";
+import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261115-events";
 const IS_DEMO = location.pathname === "/demo";
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
