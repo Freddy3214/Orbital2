@@ -10,20 +10,26 @@ async function refresh() {
     $('visits').textContent = number(data.visits);
     $('signups').textContent = number(data.signups);
     $('accounts').textContent = number(data.totalAccounts);
+    $('funnel-trial-start').textContent = number(data.funnel?.trial_start || 0);
+    $('funnel-trial-finish').textContent = number(data.funnel?.trial_finish || 0);
+    $('funnel-demo').textContent = number(data.funnel?.demo_open || 0);
+    $('funnel-register').textContent = number(data.funnel?.register_submit || 0);
     $('sources').replaceChildren();
     for (const item of data.sources) {
       const row = document.createElement('tr');
       const source = document.createElement('td');
       const visits = document.createElement('td');
+      const signups = document.createElement('td');
       source.textContent = item.source === 'direct' ? 'Direkt / unbekannt' : item.source;
       visits.textContent = number(item.visits);
-      row.append(source, visits);
+      signups.textContent = number(data.signupSources?.find(entry => entry.source === item.source)?.signups || 0);
+      row.append(source, visits, signups);
       $('sources').append(row);
     }
     if (!data.sources.length) {
       const row = document.createElement('tr');
       const cell = document.createElement('td');
-      cell.colSpan = 2;
+      cell.colSpan = 3;
       cell.textContent = 'Noch keine Besuche erfasst.';
       row.append(cell);
       $('sources').append(row);
@@ -41,7 +47,7 @@ async function refresh() {
     $('last-day').textContent = data.daily.at(-1)?.date || '';
     const start = data.countingSince ? new Date(data.countingSince).toLocaleString('de-DE') : 'noch keine Besuche';
     const ipStart = data.ipCountingSince ? new Date(data.ipCountingSince).toLocaleString('de-DE') : 'noch keine IPs erfasst';
-    $('note').textContent = `Messbeginn: ${start}. IP-Zählung seit: ${ipStart}. Stand: ${new Date(data.updatedAt).toLocaleString('de-DE')}. Ein Besuch zählt pro Browser-Tab einmal. Verschiedene IPs sind keine eindeutigen Personen; mehrere Menschen können eine IP teilen. IPs werden nur als Kennung gespeichert und Besuchsdaten nach spätestens 90 Tagen entfernt. Registrierungen werden keiner einzelnen Quelle zugeordnet.`;
+    $('note').textContent = `Messbeginn: ${start}. IP-Zählung seit: ${ipStart}. Stand: ${new Date(data.updatedAt).toLocaleString('de-DE')}. Ein Besuch zählt pro Browser-Tab einmal. Verschiedene IPs sind keine eindeutigen Personen; mehrere Menschen können eine IP teilen. IPs werden nur als Kennung gespeichert und Besuchsdaten nach spätestens 90 Tagen entfernt.`;
   } catch (error) { $('error').textContent = error.message; }
 }
 $('days').addEventListener('change', refresh);

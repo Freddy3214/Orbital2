@@ -30,10 +30,11 @@
     <div class="card"><strong id="accounts">–</strong><span>Spielerkonten insgesamt (ohne NPCs)</span></div>
   </div>
   <div class="grid">
-    <section class="panel"><h2>Herkunft der Besuche</h2><table><thead><tr><th>Quelle</th><th>Sitzungen</th></tr></thead><tbody id="sources"></tbody></table></section>
+    <section class="panel"><h2>Herkunft der Besuche</h2><table><thead><tr><th>Quelle</th><th>Sitzungen</th><th>Registrierungen*</th></tr></thead><tbody id="sources"></tbody></table></section>
     <section class="panel"><h2>Besuche pro Tag</h2><div class="bars" id="bars" role="img" aria-label="Besuche pro Tag"></div><div class="legend"><span id="first-day"></span><span id="last-day"></span></div></section>
   </div>
-  <p class="small" id="note"></p><p id="error" role="alert"></p>
-  <script type="module" src="/reichweite.js?v=2"></script>
+  <section class="panel" style="margin-top:14px"><h2>Vom Besuch zur Anmeldung</h2><p class="small">Ein Schritt zählt pro Browser-Tab höchstens einmal. Die Kurzmission ist eine Simulation; Registrierungen werden aus echten Accounts gezählt.</p><div class="cards" style="margin:12px 0 0"><div class="card"><strong id="funnel-trial-start">–</strong><span>Kurzmission gestartet</span></div><div class="card"><strong id="funnel-trial-finish">–</strong><span>Kurzmission abgeschlossen</span></div><div class="card"><strong id="funnel-demo">–</strong><span>Spielansicht geöffnet</span></div><div class="card"><strong id="funnel-register">–</strong><span>Registrierung versucht</span></div></div></section>
+  <p class="small">* Nur Registrierungen, bei denen die Browser-Sitzung zugeordnet werden konnte. Die Gesamtzahl oben bleibt maßgeblich.</p><p class="small" id="note"></p><p id="error" role="alert"></p>
+  <script type="module" src="/reichweite.js?v=3"></script>
 </body>
 </html>

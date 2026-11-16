@@ -951,11 +951,12 @@ function openGame(payload) {
 }
 async function enterGame(name, password) {
   const button = $("#start-button");
+  if (authMode === "register") window.orbitalTrack?.("register_submit");
   button.disabled = true;
   button.textContent = authMode === "login" ? "Anmeldung läuft …" : "Account wird erstellt …";
   try {
     const response = await fetch(`/api/auth/${authMode}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ username: name, password }),
+      method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ username: name, password, sessionId: window.orbitalVisitSessionId || null }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Verbindung fehlgeschlagen");

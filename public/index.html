@@ -45,6 +45,7 @@
     <link rel="stylesheet" href="/classic.css?v=8" />
     <link rel="stylesheet" href="/sand.css?v=20261103-gamefeel-2" />
     <link rel="stylesheet" href="/themes.css?v=20261003" />
+    <link rel="stylesheet" href="/trial.css?v=1" />
   <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
   <style>.gate-visitor-count{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin:12px 0 18px;padding:10px 14px;border:1px solid #b4a17a;border-radius:12px;background:linear-gradient(120deg,#3e392f,#242821);color:#ebd6aa;font-size:12px;text-align:center}.gate-visitor-count>strong{font-size:22px;color:#ffe2a4}.gate-visitor-count span strong{font-size:inherit;color:#ffe2a4}.gate-start-bonus{display:grid;gap:3px;margin:12px 0 16px;padding:12px 14px;border:1px solid #b99b65;border-radius:10px;background:#493b2bc9;color:#f9e9c8;font-size:13px}.gate-start-bonus[hidden]{display:none}.gate-start-bonus strong{font-size:15px;color:#ffe4a5}</style>
@@ -121,12 +122,15 @@
         <small id="auth-note">Passwörter werden nicht im Browser gespeichert. Der Server speichert nur einen sicheren Prüfwert.</small>
         <a class="gate-music-link" href="https://www.youtube.com/watch?v=8_5lauY-XzQ" target="_blank" rel="noopener noreferrer" aria-label="No Ress today auf YouTube öffnen">♫ No Ress today · auf YouTube hören ↗</a>
         <a class="gate-demo-link" href="/demo">Spiel ansehen · ohne Account →</a>
+        <button type="button" class="primary-button gate-trial-button" id="trial-button">Kurzmission spielen · ohne Account →</button>
         <a class="gate-demo-link" href="/discover.html" lang="en">About the game · English</a>
         <button type="button" class="secondary-button" data-share-game>Spiel teilen · Freunde einladen</button>
         <small data-share-status role="status" aria-live="polite"></small>
       </section>
     </div>
+    <dialog id="trial-dialog" class="trial-dialog" aria-label="Orbital Foundry Kurzmission"></dialog>
   <script type="module" src="/analytics.js?v=2"></script>
+    <script type="module" src="/trial.js?v=1"></script>
     <script type="module" src="/app.js?v=20261115-events-7"></script>
     <script type="module" src="/promo.js?v=20261017"></script>
   <script type="module" src="/pwa.js?v=1"></script>

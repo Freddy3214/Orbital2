@@ -16,6 +16,7 @@ async function showCounts() {
 }
 
 let visitRequest = Promise.resolve();
+let tabSessionId = null;
 try {
   const key = 'orbital-foundry-visit-v1';
   let sessionId = sessionStorage.getItem(key);
@@ -26,6 +27,7 @@ try {
     sessionId = [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('');
     sessionStorage.setItem(key, sessionId);
   }
+  tabSessionId = sessionId;
   const query = new URLSearchParams(location.search);
   let source = query.get('utm_source') || 'direct';
   if (source === 'direct' && document.referrer) {
@@ -53,4 +55,17 @@ try {
   });
 } catch { /* Browsers that block session storage still allow the game. */ }
 
+window.orbitalVisitSessionId = tabSessionId;
+window.orbitalTrack = async event => {
+  if (!tabSessionId) return;
+  await visitRequest;
+  try {
+    await fetch('/api/analytics/event', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: tabSessionId, event }),
+      credentials: 'omit', keepalive: true,
+    });
+  } catch { /* Analytics must never interrupt the game. */ }
+};
+if (location.pathname === '/demo') window.orbitalTrack('demo_open');
 visitRequest.finally(showCounts);

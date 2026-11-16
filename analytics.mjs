@@ -5,6 +5,7 @@ import { atomicJsonWriter } from './storage.mjs';
 
 const DAY = 86_400_000;
 const RETENTION_DAYS = 90;
+const FUNNEL_EVENTS = new Set(['trial_start', 'trial_finish', 'demo_open', 'register_submit', 'signup_success']);
 const dateKey = at => new Date(at).toISOString().slice(0, 10);
 const clean = (value, fallback = '') => {
   const text = String(value ?? '').trim().toLowerCase().slice(0, 48);
@@ -22,9 +23,10 @@ function visitorIp(request) {
 
 export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' }) {
   const writeLocal = atomicJsonWriter(filePath);
-  let local = { sessions: Object.create(null) };
+  let local = { sessions: Object.create(null), events: Object.create(null) };
   let pending = Promise.resolve();
   let lastPrune = 0;
+  let lastEventPrune = 0;
 
   const ready = (async () => {
     if (pool) {
@@ -38,12 +40,21 @@ export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' })
       )`);
       await pool.query('ALTER TABLE traffic_sessions ADD COLUMN IF NOT EXISTS ip_hash TEXT');
       await pool.query('CREATE INDEX IF NOT EXISTS traffic_sessions_visited_at_idx ON traffic_sessions (visited_at)');
+      await pool.query(`CREATE TABLE IF NOT EXISTS traffic_events (
+        session_id TEXT NOT NULL,
+        event_name TEXT NOT NULL,
+        visited_at BIGINT NOT NULL,
+        PRIMARY KEY (session_id, event_name)
+      )`);
+      await pool.query('CREATE INDEX IF NOT EXISTS traffic_events_visited_at_idx ON traffic_events (visited_at)');
       return;
     }
     try {
       const data = JSON.parse(await readFile(filePath, 'utf8'));
       if (data && data.sessions && typeof data.sessions === 'object' && !Array.isArray(data.sessions))
         local.sessions = Object.assign(Object.create(null), data.sessions);
+      if (data && data.events && typeof data.events === 'object' && !Array.isArray(data.events))
+        local.events = Object.assign(Object.create(null), data.events);
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
     }
@@ -97,6 +108,38 @@ export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' })
     return task;
   }
 
+  async function recordEvent(body, internal = false) {
+    await ready;
+    const id = String(body.sessionId ?? '');
+    const name = String(body.event ?? '');
+    if (!/^[a-f0-9]{32}$/.test(id) || !FUNNEL_EVENTS.has(name) || (name === 'signup_success' && !internal)) return false;
+    const now = Date.now();
+    if (pool) {
+      if (now - lastEventPrune > DAY) {
+        lastEventPrune = now;
+        await pool.query('DELETE FROM traffic_events WHERE visited_at < $1', [now - RETENTION_DAYS * DAY]);
+      }
+      const result = await pool.query(
+        `INSERT INTO traffic_events (session_id, event_name, visited_at)
+         SELECT session_id, $2, $3 FROM traffic_sessions WHERE session_id = $1
+         ON CONFLICT (session_id, event_name) DO NOTHING`,
+        [id, name, now],
+      );
+      return result.rowCount > 0;
+    }
+    const task = pending.then(async () => {
+      if (!local.sessions[id] || local.events[`${id}:${name}`]) return false;
+      const cutoff = now - RETENTION_DAYS * DAY;
+      for (const [key, item] of Object.entries(local.events))
+        if (!item || item.at < cutoff) delete local.events[key];
+      local.events[`${id}:${name}`] = { at: now };
+      await writeLocal(local);
+      return true;
+    });
+    pending = task.catch(() => {});
+    return task;
+  }
+
   async function summary(days = 30) {
     await ready;
     await pending;
@@ -106,6 +149,17 @@ export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' })
     const rows = pool
       ? (await pool.query('SELECT visited_at, source, ip_hash FROM traffic_sessions WHERE visited_at >= $1', [cutoff])).rows.map(row => ({ at: Number(row.visited_at), source: row.source, ipHash: row.ip_hash }))
       : Object.values(local.sessions).filter(row => row.at >= cutoff);
+    const eventRows = pool
+      ? (await pool.query('SELECT event_name FROM traffic_events WHERE visited_at >= $1', [cutoff])).rows.map(row => row.event_name)
+      : Object.entries(local.events).filter(([, row]) => row.at >= cutoff).map(([key]) => key.slice(33));
+    const funnel = Object.fromEntries([...FUNNEL_EVENTS].map(name => [name, eventRows.filter(event => event === name).length]));
+    const signupSources = new Map();
+    const attributed = pool
+      ? (await pool.query(`SELECT s.source FROM traffic_events e JOIN traffic_sessions s USING (session_id)
+          WHERE e.event_name = 'signup_success' AND e.visited_at >= $1`, [cutoff])).rows.map(row => row.source)
+      : Object.entries(local.events).filter(([key, row]) => key.endsWith(':signup_success') && row.at >= cutoff)
+          .map(([key]) => local.sessions[key.slice(0, 32)]?.source).filter(Boolean);
+    for (const source of attributed) signupSources.set(source, (signupSources.get(source) || 0) + 1);
     const firstVisit = pool
       ? Number((await pool.query('SELECT MIN(visited_at) AS first_visit FROM traffic_sessions')).rows[0]?.first_visit ?? Infinity)
       : Object.values(local.sessions).reduce((first, row) => Math.min(first, row.at), Infinity);
@@ -132,6 +186,8 @@ export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' })
       uniqueIps: new Set(rows.map(row => row.ipHash).filter(Boolean)).size,
       signups: [...daily.values()].reduce((sum, day) => sum + day.signups, 0),
       totalAccounts: accounts.length,
+      funnel,
+      signupSources: [...signupSources].map(([source, signups]) => ({ source, signups })).sort((a, b) => b.signups - a.signups || a.source.localeCompare(b.source)),
       daily: [...daily.values()].reverse(),
       sources: [...sources].map(([source, visits]) => ({ source, visits })).sort((a, b) => b.visits - a.visits || a.source.localeCompare(b.source)),
       countingSince: Number.isFinite(firstVisit) ? new Date(firstVisit).toISOString() : null,
@@ -140,5 +196,5 @@ export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' })
     };
   }
 
-  return { ready, recordVisit, summary };
+  return { ready, recordVisit, recordEvent, recordSignup: sessionId => recordEvent({ sessionId, event: 'signup_success' }, true), summary };
 }

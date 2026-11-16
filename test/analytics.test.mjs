@@ -18,12 +18,23 @@ test('traffic counts browser tabs once and registrations only after counting beg
     assert.equal(await analytics.recordVisit({ sessionId, source: 'direct', landing: '/' }, firstIp), false);
     assert.equal(await analytics.recordVisit({ sessionId: 'b'.repeat(32), source: 'direct', landing: '/' }, firstIp), true);
     assert.equal(await analytics.recordVisit({ sessionId: 'c'.repeat(32), source: 'direct', landing: '/' }, secondIp), true);
+    assert.equal(await analytics.recordEvent({ sessionId, event: 'trial_start' }), true);
+    assert.equal(await analytics.recordEvent({ sessionId, event: 'trial_start' }), false);
+    assert.equal(await analytics.recordEvent({ sessionId, event: 'trial_finish' }), true);
+    assert.equal(await analytics.recordEvent({ sessionId: 'd'.repeat(32), event: 'trial_start' }), false);
+    assert.equal(await analytics.recordEvent({ sessionId, event: 'unknown_event' }), false);
+    assert.equal(await analytics.recordEvent({ sessionId, event: 'signup_success' }), false);
+    assert.equal(await analytics.recordSignup(sessionId), true);
     accounts.push({ id: 'new', createdAt: Date.now() });
     const report = await analytics.summary(7);
     assert.equal(report.visits, 3);
     assert.equal(report.uniqueIps, 2);
     assert.equal(report.signups, 1);
     assert.equal(report.totalAccounts, 2);
+    assert.equal(report.funnel.trial_start, 1);
+    assert.equal(report.funnel.trial_finish, 1);
+    assert.equal(report.funnel.signup_success, 1);
+    assert.deepEqual(report.signupSources, [{ source: 'reddit_indiedev', signups: 1 }]);
     assert.deepEqual(report.sources, [{ source: 'direct', visits: 2 }, { source: 'reddit_indiedev', visits: 1 }]);
     const saved = await readFile(filePath, 'utf8');
     assert.equal(saved.includes('reddit_indiedev'), true);
@@ -32,6 +43,7 @@ test('traffic counts browser tabs once and registrations only after counting beg
     const reopened = createAnalytics({ filePath, getAccounts: async () => accounts, ipHashKey: 'private-test-key' });
     await reopened.ready;
     assert.equal(await reopened.recordVisit({ sessionId, source: 'direct', landing: '/' }, firstIp), false);
+    assert.equal((await reopened.summary(7)).funnel.trial_start, 1);
   } finally {
     await unlink(filePath).catch(error => { if (error.code !== 'ENOENT') throw error; });
   }

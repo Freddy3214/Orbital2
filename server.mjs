@@ -1240,6 +1240,10 @@ const server = createServer(async (request, response) => {
       const recorded = await analytics.recordVisit(await readJsonBody(request, 2048), request);
       return json(response, 200, { ok: true, recorded });
     }
+    if (request.method === "POST" && url.pathname === "/api/analytics/event") {
+      const recorded = await analytics.recordEvent(await readJsonBody(request, 512));
+      return json(response, 200, { ok: true, recorded });
+    }
     if (request.method === "GET" && url.pathname === "/api/analytics/summary") {
       return json(response, 200, await analytics.summary(url.searchParams.get("days")));
     }
@@ -1289,6 +1293,7 @@ const server = createServer(async (request, response) => {
         if (error?.code === "23505") return json(response, 409, { error: "Dieser Kommandantenname ist bereits vergeben." });
         throw error;
       }
+      await analytics.recordSignup(body.sessionId).catch(() => false);
       issueSession(response, key);
       return json(response, 201, { user: publicAccount(account), state: account.state, capabilities: { testGrant: hasTestGrantAccess(account) } });
     }

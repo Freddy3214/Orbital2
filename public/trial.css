@@ -1,0 +1,14 @@
+.gate-trial-button{width:100%;margin:12px 0 4px}
+.trial-dialog{width:min(540px,calc(100vw - 28px));max-height:calc(100vh - 28px);padding:0;border:1px solid #b89b69;border-radius:18px;background:#17232b;color:#f6e9ca;box-shadow:0 30px 100px #000b;overflow:auto}
+.trial-dialog::backdrop{background:#020712d9;backdrop-filter:blur(5px)}
+.trial-shell{position:relative;padding:clamp(20px,5vw,32px);background:radial-gradient(circle at 85% 4%,#36616b55,transparent 48%),linear-gradient(145deg,#263540,#151d27)}
+.trial-close{position:absolute;right:15px;top:10px;border:0;background:transparent;color:#eed4a6;font-size:28px;cursor:pointer}
+.trial-eyebrow{color:#eac887;font-size:11px;letter-spacing:.16em;font-weight:800}.trial-shell h2{font-size:clamp(24px,5vw,34px);margin:8px 0}
+.trial-honesty,.trial-description{color:#cfdae0;line-height:1.5}.trial-honesty{font-size:13px;margin:0 0 18px}
+.trial-world{display:flex;align-items:center;gap:16px;min-height:100px;padding:16px;border:1px solid #64717a;border-radius:14px;background:linear-gradient(110deg,#09121e,#17313c)}
+.trial-world strong,.trial-world small{display:block}.trial-world strong{font-size:18px}.trial-world small{margin-top:6px;color:#b8d5d9}
+.trial-planet{flex:none;width:67px;height:67px;border-radius:50%;background:radial-gradient(circle at 32% 25%,#cde7c5 0,#3e7d8e 24%,#263b62 57%,#0a1226 78%);box-shadow:inset -12px -10px 18px #020915,0 0 22px #59b5bc55}
+.trial-resources{display:flex;flex-wrap:wrap;gap:7px;margin:12px 0}.trial-resources span{display:flex;gap:8px;padding:7px 9px;border:1px solid #596b72;border-radius:8px;font-size:12px}.trial-resources b{color:#ffe19c}
+.trial-steps{list-style:none;display:grid;gap:7px;margin:18px 0;padding:0}.trial-steps li{display:flex;align-items:center;gap:10px;color:#aebdc3;font-size:14px}.trial-steps li span{display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:#41525c;color:#fff;font-weight:700}.trial-steps li.current{color:#ffe1a6;font-weight:700}.trial-steps li.current span{background:#a77735}.trial-steps li.done span{background:#297c70}
+.trial-action{width:100%;min-height:44px}.trial-foot{display:flex;justify-content:space-between;gap:12px;margin-top:15px;font-size:12px}.trial-foot a{color:#dfc488}.trial-foot span{color:#acbdc7}
+@media(prefers-reduced-motion:reduce){.trial-dialog::backdrop{backdrop-filter:none}}
