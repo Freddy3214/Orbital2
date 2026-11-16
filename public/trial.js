@@ -60,3 +60,8 @@ document.addEventListener('orbital-language-change', () => {
   if (launch) launch.textContent = copy('Kurzmission spielen · ohne Account →', 'Play a short mission · no account →');
   if (dialog?.open) render();
 });
+if (new URLSearchParams(location.search).get('trial') === '1') {
+  document.addEventListener('orbital-session-restored', () => {
+    if (!document.getElementById('commander-gate')?.classList.contains('hidden')) launch?.click();
+  }, { once: true });
+}

@@ -974,6 +974,7 @@ async function restoreSession() {
     if (!response.ok) return;
     openGame(await response.json());
   } catch { /* The access screen remains visible if the server is unavailable. */ }
+  finally { document.dispatchEvent(new Event("orbital-session-restored")); }
 }
 async function logout() {
   if (IS_DEMO) { location.href = "/"; return; }
