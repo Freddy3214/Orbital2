@@ -116,11 +116,19 @@
         <p id="gate-copy">Lege einen Kommandantenaccount an. Dein Fortschritt bleibt auf dem Spielserver gespeichert.</p>
         <div class="gate-start-bonus" id="gate-start-bonus"><strong>Dein Startpaket</strong><span>100.000 Metall · 100.000 Kristall · 100.000 Tritium</span><span>2 Stunden Bauboost · kostenlos und ohne Download</span></div>
         <label for="commander-input">Kommandantenname</label>
-        <input id="commander-input" minlength="3" maxlength="20" placeholder="z. B. Nova" autocomplete="username" />
+        <input id="commander-input" minlength="3" maxlength="20" placeholder="z. B. Nova" autocomplete="username" autocapitalize="none" spellcheck="false" />
         <label for="password-input">Passwort</label>
         <input id="password-input" minlength="8" maxlength="128" type="password" placeholder="mindestens 8 Zeichen" autocomplete="new-password" />
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input id="show-password" type="checkbox" style="width:auto;margin:0" /><span data-entry-de="Passwort anzeigen" data-entry-en="Show password">Passwort anzeigen</span></label>
+        <p style="font-size:13px;color:#ead5aa;margin:8px 0" data-entry-de="Nur Name und Passwort · keine E-Mail nötig · kostenlos" data-entry-en="Just a name and password · no email needed · free">Nur Name und Passwort · keine E-Mail nötig · kostenlos</p>
         <button id="start-button" class="primary-button">Account erstellen <span>→</span></button>
         <small id="auth-note">Passwörter werden nicht im Browser gespeichert. Der Server speichert nur einen sicheren Prüfwert.</small>
+        <details style="margin:12px 0;color:#e4d4b8;font-size:13px;line-height:1.6">
+          <summary style="cursor:pointer" data-entry-de="Was erwartet mich nach der Registrierung?" data-entry-en="What happens after I register?">Was erwartet mich nach der Registrierung?</summary>
+          <p data-entry-de="Du startest mit einem eigenen Planeten, 100.000 Rohstoffen jeder Sorte und zwei Stunden Bauboost. Baue zuerst deine Minen und Energieversorgung aus, erforsche neue Technik und starte deine erste Flotte." data-entry-en="Start with your own planet, 100,000 of each resource and a two-hour building boost. Build mines and power supply, research technology and launch your first fleet.">Du startest mit einem eigenen Planeten, 100.000 Rohstoffen jeder Sorte und zwei Stunden Bauboost. Baue zuerst deine Minen und Energieversorgung aus, erforsche neue Technik und starte deine erste Flotte.</p>
+          <p data-entry-de="Dein Fortschritt wird auf dem Server gespeichert. Mit demselben Namen und Passwort spielst du auf einem anderen Gerät weiter. Bewahre die Zugangsdaten auf: Eine Wiederherstellung per E-Mail gibt es derzeit nicht." data-entry-en="Your progress is saved on the server. Use the same name and password on another device. Keep your credentials safe: email password recovery is currently unavailable.">Dein Fortschritt wird auf dem Server gespeichert. Mit demselben Namen und Passwort spielst du auf einem anderen Gerät weiter. Bewahre die Zugangsdaten auf: Eine Wiederherstellung per E-Mail gibt es derzeit nicht.</p>
+          <p data-entry-de="Orbital Foundry ist eine frühe Alpha. Fehler und Balanceänderungen sind möglich. Du kannst die Kurzmission vorab ohne Anmeldung ausprobieren." data-entry-en="Orbital Foundry is an early alpha. Bugs and balance changes are possible. Try the short mission before creating an account.">Orbital Foundry ist eine frühe Alpha. Fehler und Balanceänderungen sind möglich. Du kannst die Kurzmission vorab ohne Anmeldung ausprobieren.</p>
+        </details>
         <a class="gate-music-link" href="https://www.youtube.com/watch?v=8_5lauY-XzQ" target="_blank" rel="noopener noreferrer" aria-label="No Ress today auf YouTube öffnen">♫ No Ress today · auf YouTube hören ↗</a>
         <a class="gate-demo-link" href="/demo">Spiel ansehen · ohne Account →</a>
         <a class="gate-demo-link" href="/discover.html" lang="en">About the game · English</a>
@@ -134,5 +142,16 @@
     <script type="module" src="/app.js?v=20261116-trial-1"></script>
     <script type="module" src="/promo.js?v=20261017"></script>
   <script type="module" src="/pwa.js?v=1"></script>
+    <script>
+      document.getElementById('show-password').addEventListener('change', function () {
+        document.getElementById('password-input').type = this.checked ? 'text' : 'password';
+      });
+      const updateEntryCopy = () => {
+        const key = document.documentElement.lang.startsWith('en') ? 'entryEn' : 'entryDe';
+        document.querySelectorAll('[data-entry-de]').forEach(element => { element.textContent = element.dataset[key]; });
+      };
+      document.addEventListener('orbital-language-change', updateEntryCopy);
+      updateEntryCopy();
+    </script>
   </body>
 </html>
