@@ -21,8 +21,8 @@ function visitorIp(request) {
   return typeof direct === 'string' && isIP(direct) ? direct : null;
 }
 
-// Count player-initiated orders, departures and messages from retained gameplay logs.
-const PLAYER_ACTION = / in die Baureihe aufgenommen| auf Stufe \d+ angestoßen\.| in der Orbitalwerft in Auftrag gegeben\.|^Konvoi nach .+ gestartet\.| nach .+ entsandt\.| unterwegs zu .+ Ankunft |^Nachricht an .+ gesendet:/;
+// Count player-initiated orders, departures and messages from retained gameplay logs, plus explicit colony changes and cancellations.
+const PLAYER_ACTION = / in die Baureihe aufgenommen| auf Stufe \d+ angestoßen\.| in der Orbitalwerft in Auftrag gegeben\.|^Konvoi nach .+ gestartet\.| nach .+ entsandt\.| unterwegs zu .+ Ankunft |^Nachricht an .+ gesendet:|^Planet umbenannt: |^Flotte (?:nach .+ wurde zurückgerufen|wurde vorzeitig zurückgerufen)\.| auf Stufe \d+ abgebrochen\. Volle Kosten erstattet\./;
 export function countWeeklyPlayers(accounts, now, isTestAccount) {
   const cutoff = now - 7 * DAY;
   return accounts.filter(account => !isTestAccount(account) && Array.isArray(account.state?.log) &&
