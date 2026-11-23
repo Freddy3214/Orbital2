@@ -1,8 +1,9 @@
 import { DAILY_GOALS, progression } from "./progression.js?v=20261103";
 import { FLEET, DEFENSE, shipCargo, fleetCapacity, flightFuel, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261103-cargo-fuel-1";
 import { simulateBattle } from "./combat.js?v=20261103-cargo-fuel-1";
-import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261123-playable-demo";
+import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261124-entry";
 const IS_DEMO = location.pathname === "/demo";
+const FROM_DEMO = new URLSearchParams(location.search).get("from") === "demo";
 const DEMO_ACTIONS = new Set([
   "planetStep", "signalId", "orbitTarget", "mapAction", "sensorFocus", "systemStep",
   "planetId", "openGalaxy", "fleetFilter", "simulate", "simReset", "simReport",
@@ -916,6 +917,8 @@ function setGateMode(mode) {
   $("#gate-title").textContent = login ? "Willkommen zurück." : "Deine erste Welt wartet.";
   $("#gate-copy").textContent = login ? "Melde dich an und führe deinen gespeicherten Spielstand fort." : "Lege einen Kommandantenaccount an. Dein Fortschritt bleibt auf dem Spielserver gespeichert.";
   $("#gate-start-bonus").hidden = login;
+  $("#demo-entry-note").hidden = login || !FROM_DEMO;
+  $("#auth-error").hidden = true;
   $("#start-button").innerHTML = login ? "Anmelden <span>→</span>" : "Account erstellen <span>→</span>";
   $("#password-input").autocomplete = login ? "current-password" : "new-password";
 }
@@ -956,6 +959,9 @@ function openGame(payload) {
 }
 async function enterGame(name, password) {
   const button = $("#start-button");
+  if (button.disabled) return;
+  const feedback = $("#auth-error");
+  feedback.hidden = true;
   if (authMode === "register") window.orbitalTrack?.("register_submit");
   button.disabled = true;
   button.textContent = authMode === "login" ? "Anmeldung läuft …" : "Account wird erstellt …";
@@ -963,11 +969,16 @@ async function enterGame(name, password) {
     const response = await fetch(`/api/auth/${authMode}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ username: name, password, sessionId: window.orbitalVisitSessionId || null }),
     });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || "Verbindung fehlgeschlagen");
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.state) {
+      feedback.textContent = translateText(payload?.error || "Der Spielserver antwortet gerade nicht. Versuch es gleich noch einmal.");
+      feedback.hidden = false;
+      return;
+    }
     openGame(payload);
-  } catch (error) {
-    toast(error.message || "Der Spielserver antwortet nicht. Starte ihn und lade die Seite neu.", true);
+  } catch {
+    feedback.textContent = translateText("Der Spielserver antwortet gerade nicht. Versuch es gleich noch einmal.");
+    feedback.hidden = false;
   } finally {
     button.disabled = false;
     button.innerHTML = authMode === "login" ? "Anmelden <span>→</span>" : "Account erstellen <span>→</span>";
@@ -1809,15 +1820,29 @@ function render({ live = false } = {}) {
   const messageNav = document.querySelector('#nav [data-view="messages"]');
   if (messageNav) messageNav.innerHTML = `<span>✉</span> Nachrichten${unreadCount ? ` (${unreadCount})` : ""}`;
   if (IS_DEMO) {
-    if (!content.querySelector(".demo-banner")) {
-      content.insertAdjacentHTML("afterbegin", '<div class="demo-banner"><strong>DEMO · Beispielimperium</strong><span>Baue, forsche und teste die Werft. Das Beispiel wird beim Neuladen zurückgesetzt.</span><button type="button" class="secondary-button" data-view-jump="buildings" data-focus-entity="metalMine">Erste Mine ausbauen →</button><a href="/">Eigenes Imperium starten →</a></div>');
-    }
+    renderDemoBanner();
     content.querySelectorAll("[data-mission],[data-colonize],[data-spy-target],[data-raid-target],[data-start-transfer]").forEach(button => button.disabled = true);
   }
   translateDOM();
 }
 
 let demoOrderTracked = false;
+
+function renderDemoBanner() {
+  let banner = content.querySelector(".demo-banner");
+  if (!banner) {
+    banner = document.createElement("section");
+    banner.className = "demo-banner";
+    content.prepend(banner);
+  }
+  const stage = demoOrderTracked ? "ordered" : "start";
+  if (banner.dataset.stage === stage) return;
+  banner.dataset.stage = stage;
+  banner.innerHTML = demoOrderTracked
+    ? '<strong>Erster Demo-Auftrag erteilt</strong><span>Teste weiter oder starte mit einem kostenlosen Account deine eigene Kolonie. Dein Demo-Fortschritt wird nicht übertragen.</span><a class="primary-button" href="/?from=demo#gate-title">Eigene Kolonie gründen →</a><a href="https://github.com/Freddy3214/Orbital2/issues/7">Feedback zur Demo →</a>'
+    : '<strong>DEMO · Beispielimperium</strong><span>Baue, forsche und teste die Werft. Das Beispiel wird beim Neuladen zurückgesetzt.</span><button type="button" class="secondary-button" data-view-jump="buildings" data-focus-entity="metalMine">Erste Mine ausbauen →</button><a href="/?from=demo#gate-title">Eigenes Imperium starten →</a>';
+}
+
 function recordDemoOrder() {
   if (!IS_DEMO || demoOrderTracked) return;
   demoOrderTracked = true;
