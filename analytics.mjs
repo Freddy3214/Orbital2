@@ -21,7 +21,16 @@ function visitorIp(request) {
   return typeof direct === 'string' && isIP(direct) ? direct : null;
 }
 
-export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' }) {
+// Count player-initiated orders, departures and messages from retained gameplay logs.
+const PLAYER_ACTION = / in die Baureihe aufgenommen| auf Stufe \d+ angestoßen\.| in der Orbitalwerft in Auftrag gegeben\.|^Konvoi nach .+ gestartet\.| nach .+ entsandt\.| unterwegs zu .+ Ankunft |^Nachricht an .+ gesendet:/;
+export function countWeeklyPlayers(accounts, now, isTestAccount) {
+  const cutoff = now - 7 * DAY;
+  return accounts.filter(account => !isTestAccount(account) && Array.isArray(account.state?.log) &&
+    account.state.log.some(entry => Number(entry?.at) >= cutoff && Number(entry?.at) <= now &&
+      ['system', 'scan', 'mission', 'message'].includes(entry.type) && PLAYER_ACTION.test(entry.text))).length;
+}
+
+export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '', isTestAccount = () => false }) {
   const writeLocal = atomicJsonWriter(filePath);
   let local = { sessions: Object.create(null), events: Object.create(null) };
   let pending = Promise.resolve();
@@ -186,6 +195,7 @@ export function createAnalytics({ pool, filePath, getAccounts, ipHashKey = '' })
       uniqueIps: new Set(rows.map(row => row.ipHash).filter(Boolean)).size,
       signups: [...daily.values()].reduce((sum, day) => sum + day.signups, 0),
       totalAccounts: accounts.length,
+      weeklyActivePlayers: countWeeklyPlayers(accounts, today, isTestAccount),
       funnel,
       signupSources: [...signupSources].map(([source, signups]) => ({ source, signups })).sort((a, b) => b.signups - a.signups || a.source.localeCompare(b.source)),
       daily: [...daily.values()].reverse(),

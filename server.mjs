@@ -291,7 +291,7 @@ async function initializeStorage() {
   `);
 }
 const storageReady = initializeStorage();
-const analytics = createAnalytics({ pool, filePath: process.env.ANALYTICS_FILE || join(root, "data", "traffic.json"), getAccounts: allAccounts, ipHashKey: process.env.ANALYTICS_HASH_KEY || "" });
+const analytics = createAnalytics({ pool, filePath: process.env.ANALYTICS_FILE || join(root, "data", "traffic.json"), getAccounts: allAccounts, isTestAccount: hasTestGrantAccess, ipHashKey: process.env.ANALYTICS_HASH_KEY || "" });
 const eventFile = process.env.EVENT_FILE || join(dirname(accountFile), "galaxy-events.json");
 const writeEventFile = atomicJsonWriter(eventFile);
 let localEventWorld = null;

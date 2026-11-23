@@ -10,6 +10,7 @@ async function refresh() {
     $('visits').textContent = number(data.visits);
     $('signups').textContent = number(data.signups);
     $('accounts').textContent = number(data.totalAccounts);
+    $('weekly-active').textContent = Number.isInteger(data.weeklyActivePlayers) ? number(data.weeklyActivePlayers) : '–';
     $('funnel-trial-start').textContent = number(data.funnel?.trial_start || 0);
     $('funnel-trial-finish').textContent = number(data.funnel?.trial_finish || 0);
     $('funnel-demo').textContent = number(data.funnel?.demo_open || 0);
