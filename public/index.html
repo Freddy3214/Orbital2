@@ -154,19 +154,9 @@
     <dialog id="trial-dialog" class="trial-dialog" aria-label="Orbital Foundry Kurzmission"></dialog>
   <script type="module" src="/analytics.js?v=3"></script>
     <script type="module" src="/trial.js?v=1"></script>
-    <script type="module" src="/app.js?v=20261123-queues"></script>
+    <script type="module" src="/app.js?v=20261123-expedition"></script>
     <script type="module" src="/promo.js?v=20261017"></script>
   <script type="module" src="/pwa.js?v=1"></script>
-    <script>
-      document.getElementById('show-password').addEventListener('change', function () {
-        document.getElementById('password-input').type = this.checked ? 'text' : 'password';
-      });
-      const updateEntryCopy = () => {
-        const key = document.documentElement.lang.startsWith('en') ? 'entryEn' : 'entryDe';
-        document.querySelectorAll('[data-entry-de]').forEach(element => { element.textContent = element.dataset[key]; });
-      };
-      document.addEventListener('orbital-language-change', updateEntryCopy);
-      updateEntryCopy();
-    </script>
+    <script type="module" src="/entry.js?v=1"></script>
   </body>
 </html>
