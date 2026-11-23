@@ -49,6 +49,21 @@
   <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/app-icon.svg" type="image/svg+xml" />
   <style>.gate-visitor-count{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px;margin:12px 0 18px;padding:10px 14px;border:1px solid #b4a17a;border-radius:12px;background:linear-gradient(120deg,#3e392f,#242821);color:#ebd6aa;font-size:12px;text-align:center}.gate-visitor-count>strong{font-size:22px;color:#ffe2a4}.gate-visitor-count span strong{font-size:inherit;color:#ffe2a4}.gate-start-bonus{display:grid;gap:3px;margin:12px 0 16px;padding:12px 14px;border:1px solid #b99b65;border-radius:10px;background:#493b2bc9;color:#f9e9c8;font-size:13px}.gate-start-bonus[hidden]{display:none}.gate-start-bonus strong{font-size:15px;color:#ffe4a5}</style>
+  <style>
+    .command-overview .command-orders { grid-column: 1 / -1; grid-row: 2; min-width: 0; }
+    .command-overview .fleet-dashboard-panel { grid-row: 3; }
+    .command-orders > h2 { margin: 0 0 10px; }
+    .command-order-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; }
+    .order-panel { min-width: 0; margin-bottom: 15px; border-top: 3px solid var(--order-accent); }
+    .command-order-grid .order-panel { margin: 0; }
+    .order-panel--building { --order-accent: #d3a56a; }
+    .order-panel--research { --order-accent: #78b9d1; }
+    .order-panel--ship { --order-accent: #99c08d; }
+    .order-panel .order-scope { margin: 0 0 10px; color: var(--muted); font-size: .85rem; }
+    .order-panel .queue-top { flex-wrap: wrap; }
+    .order-panel .progress i { background: var(--order-accent); }
+    .order-panel .order-shortcut { margin-top: 10px; }
+  </style>
 </head>
   <body>
     <div class="starfield" aria-hidden="true"></div>
@@ -139,7 +154,7 @@
     <dialog id="trial-dialog" class="trial-dialog" aria-label="Orbital Foundry Kurzmission"></dialog>
   <script type="module" src="/analytics.js?v=3"></script>
     <script type="module" src="/trial.js?v=1"></script>
-    <script type="module" src="/app.js?v=20261116-trial-1"></script>
+    <script type="module" src="/app.js?v=20261123-queues"></script>
     <script type="module" src="/promo.js?v=20261017"></script>
   <script type="module" src="/pwa.js?v=1"></script>
     <script>

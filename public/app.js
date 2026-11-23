@@ -1046,25 +1046,32 @@ function orderSchedule(orders, kind, now=Date.now()) {
     return {kind,queue,index,start,end,duration};
   });
 }
-function queueOverview() { return `<section class="panel queue-planning-panel"><div class="panel-inner"><div class="panel-title"><h2>Aufträge</h2><span>Bau ${buildingQueue().length}/5 · Forschung ${researchOrders().length}/5 · Werft ${shipOrders().length}/5</span></div>${queueRows()}</div></section>`; }
-function queueRows(buildingsOnly = false) {
-  const now = Date.now();
-  const queued = [
-    ...buildingQueueSchedule(now).map(({ queue, index, start, end, duration }) => ({ kind: "building", queue, index, start, end, duration })),
-    ...(buildingsOnly ? [] : [
-      ...orderSchedule(researchOrders(), "research", now),
-      ...orderSchedule(shipOrders(), "ship", now),
-    ]),
-  ];
-  if (!queued.length) return `<div class="empty-state"><strong>Keine aktiven Aufträge</strong>Ressourcen werden weiter erzeugt, während du planst.</div>`;
-  return `<div class="queue-stack">${queued.map(({ kind, queue, index, start, end, duration }) => {
+const QUEUE_SECTIONS = {
+  building: { title: "Gebäude", view: "buildings", action: "Zur Infrastruktur", scope: "Aktiver Planet", empty: "Kein Gebäude in Auftrag." },
+  research: { title: "Forschung", view: "research", action: "Zum Forschungslabor", scope: "Imperiumsweit", empty: "Keine Forschung in Auftrag." },
+  ship: { title: "Schiffe", view: "shipyard", action: "Zur Werft", scope: "Aktiver Planet", empty: "Kein Schiff in Auftrag." },
+};
+function queuePanel(kind, now = Date.now(), shortcut = false) {
+  const section = QUEUE_SECTIONS[kind];
+  const orders = kind === "building"
+    ? buildingQueueSchedule(now)
+    : orderSchedule(kind === "research" ? researchOrders() : shipOrders(), kind, now);
+  return `<section class="panel order-panel order-panel--${kind}"><div class="panel-inner">
+    <div class="panel-title"><h2>${section.title}</h2><span>${orders.length}/${QUEUE_LIMIT} belegt</span></div>
+    <p class="order-scope">${section.scope}</p>
+    ${orders.length ? queueRows(kind, orders, now) : `<div class="empty-state">${section.empty}</div>`}
+    ${shortcut ? `<button type="button" class="secondary-button order-shortcut" data-view-jump="${section.view}">${section.action} →</button>` : ""}
+  </div></section>`;
+}
+function queueRows(kind, queued, now) {
+  return `<div class="queue-stack">${queued.map(({ queue, index, start, end, duration }) => {
     const config = kind === "building" ? BUILDINGS[queue.key] : kind === "research" ? RESEARCH[queue.key] : SHIPS[queue.key];
     const waiting = index > 0;
-    const total = duration || (queue.completesAt || now) - (queue.startedAt || now);
-    const percent = waiting ? 0 : Math.max(0, Math.min(100, ((now - queue.startedAt) / total) * 100));
-    const label = kind === "building" ? `Stufe ${queue.targetLevel}` : kind === "research" ? `Stufe ${queue.targetLevel}` : `${queue.amount} Einheit`;
+    const total = Math.max(1, end - start || duration);
+    const percent = waiting ? 0 : Math.max(0, Math.min(100, ((now - start) / total) * 100));
+    const label = kind === "ship" ? `${queue.amount} ${queue.amount === 1 ? "Einheit" : "Einheiten"}` : `Stufe ${queue.targetLevel}`;
     const effectiveEnd = end || queue.completesAt;
-    const timing = waiting ? `Start ${formatDateTime(start)} · Ende ${formatDateTime(end)}` : `${formatDuration(effectiveEnd - now)} · Ende ${formatDateTime(effectiveEnd)}`;
+    const timing = waiting ? `Start ${formatDateTime(start)} · Ende ${formatDateTime(end)}` : `Läuft · ${formatDuration(effectiveEnd - now)} verbleibend · Ende ${formatDateTime(effectiveEnd)}`;
     const cancel = kind === "building" ? `<button class="queue-cancel" data-cancel-building="${index}">${waiting ? "Auftrag entfernen" : "Bau abbrechen"} · 100 % zurück</button>` : "";
     return `<div class="queue-row ${waiting ? "waiting" : ""}"><div class="queue-top"><strong>${escapeHtml(config.name)} <span>· ${label}${waiting ? ` · Position ${index + 1}` : ""}</span></strong><span>${timing}</span></div><div class="progress"><i style="width:${percent}%"></i></div>${cancel}</div>`;
   }).join("")}</div>`;
@@ -1098,7 +1105,7 @@ function overviewView() {
   const energy = energyStats();
   const rate = production();
   const planet = activePlanet();
-  const activeOrders = buildingQueue().length + researchOrders().length + shipOrders().length;
+  const queueTime = Date.now();
   const unreadCount = mailboxEntries().filter(entry => entry.unread).length;
   return `
     <section class="view-heading"><div><span class="eyebrow">KOMMANDOÜBERSICHT</span><h1>Guten Flug, ${escapeHtml(state.commander)}.</h1>${unreadCount ? `<button class="dashboard-unread" data-open-messages>✉ ${unreadCount} ungelesene ${unreadCount === 1 ? "Nachricht" : "Nachrichten"} · Postfach öffnen →</button>` : ""}<p>${escapeHtml(planet.name)} produziert weiter, auch wenn du nicht im Kontrollraum bist. Flotten, Baureihen und Meldungen bleiben hier im Blick.</p></div><span class="sector-label">${escapeHtml(planet.coordinates)} · LIVE</span></section>
@@ -1108,7 +1115,7 @@ function overviewView() {
     <div class="tip" style="margin-bottom:15px"><b>${worldSpeedAt() === WORLD_SPEED ? "Schnelle Galaxie · ×10" : "Schnelle Galaxie startet bald"}</b><span>${worldSpeedAt() === WORLD_SPEED ? "Neue Bau-, Forschungs- und Werftaufträge sowie die Rohstoffförderung laufen zehnmal schneller. PvP-Angriffe brauchen mindestens drei Minuten Anflugzeit." : `Die zehnfache Geschwindigkeit für neue Aufträge und Rohstoffförderung startet um ${new Date(SPEED_START_AT).toLocaleTimeString(locale(), {hour:"2-digit",minute:"2-digit",timeZone:"Europe/Berlin"})} Uhr. Laufende Aufträge behalten ihre Zeiten.`}</span></div>
     <div class="grid overview-grid command-overview">
       <section class="panel hero-panel compact-planet">${planetArtMarkup(planet, "hero-planet-art")}<span class="eyebrow">${planet.homeworld ? "HEIMATWELT" : "KOLONIE"} · ${escapeHtml(planet.classification)}</span><h2>${escapeHtml(planet.name)} · ${escapeHtml(planetSizeLabel(planet.fields))}</h2><p>${escapeHtml((PLANET_TYPES[planet.type] || PLANET_TYPES.temperate).terrain)} · <strong>${formatNumber(planet.fields)} Baufelder</strong>, davon ${formatNumber(fieldUsage(planet))} belegt.</p><div class="field-meter"><span><b>${formatNumber(fieldUsage(planet))}</b> / ${formatNumber(planet.fields)} Baufelder · ${buildingQueue().length} reserviert</span><i style="width:${(fieldUsage(planet) / planet.fields) * 100}%"></i></div><div class="metric-row"><div class="metric"><span>Imperiumswert</span><strong>${formatNumber(playerScore())}</strong></div><div class="metric"><span>Gebäude</span><strong>${Object.values(planetBuildings()).reduce((sum, level) => sum + level, 0)}</strong></div><div class="metric"><span>Planeten</span><strong>${state.planets.length} / 8</strong></div></div></section>
-      <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Aufträge</h2><span>${activeOrders ? `${activeOrders} AUFTRÄGE` : "ECHTZEIT"}</span></div>${queueRows()}</div></section>
+      <section class="command-orders" aria-label="Warteschlangen"><h2>Warteschlangen</h2><div class="command-order-grid">${Object.keys(QUEUE_SECTIONS).map(kind => queuePanel(kind, queueTime, true)).join("")}</div></section>
       <section class="panel fleet-dashboard-panel"><div class="panel-inner"><div class="panel-title"><h2>Aktive Flotten</h2><span>${state.missions.length + state.pvpFlights.length + state.eventFlights.length} UNTERWEGS</span></div>${missionStatusMarkup()}</div></section>
       <section class="panel command-alerts"><div class="panel-inner"><div class="panel-title"><h2>Alarmzentrale</h2><span>${state.incomingFlights.length} ANFLÜGE</span></div>${notificationMarkup()}</div></section>
       <section class="panel"><div class="panel-inner"><div class="panel-title"><h2>Industrieprotokoll</h2><span>PRO STUNDE</span></div><div class="stat-list"><div class="stat-line"><span>Metallförderung</span><strong>+${formatNumber(rate.metal)}</strong></div><div class="stat-line"><span>Kristallförderung</span><strong>+${formatNumber(rate.crystal)}</strong></div><div class="stat-line"><span>Tritiumproduktion</span><strong>+${formatNumber(rate.tritium)}</strong></div><div class="stat-line"><span>Mineneffizienz</span><strong class="${energy.efficiency === 1 ? "energy-good" : "energy-warning"}">${formatNumber(energy.efficiency * 100)}%</strong></div></div></div></section>
@@ -1189,10 +1196,10 @@ function buildingsView() {
   const makeGroup = (title, entries) => `<section class="entity-list"><div class="panel-title"><h2>${title}</h2><span>${title === "Ökonomie" ? "PRODUKTION" : "KOLONIALE SYSTEME"}</span></div>${entries.map(([key, config]) => { const level = planetBuildings()[key]; const cost = getCost(config, projected.buildings[key] + 1); const requirements = config.requires ? config.requires(projected) : []; return entityCard("build", key, config, level, cost, requirements, "building"); }).join("")}</section>`;
   const schedule = buildingQueueSchedule();
   const queueEnd = schedule.at(-1)?.end;
-  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · BAUTEMPO ${constructionSpeedFactor().toFixed(2)}×${queueEnd ? ` · FERTIG ${formatDateTime(queueEnd)}` : ""}</span></section><section class="panel queue-planning-panel"><div class="panel-inner"><div class="panel-title"><h2>Baureihe</h2><span>${buildingQueue().length ? `${buildingQueue().length}/5 GEPLANT` : "0/5 FREI"}</span></div>${queueRows(true)}</div></section><div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">PLANETARE INFRASTRUKTUR</span><h1>Ausbauplan für ${escapeHtml(activePlanet().name)}</h1><p>Mit jeder Stufe steigt die Bauzeit deutlich: von Sekunden über Minuten und Stunden bis zu mehreren Tagen. Roboterfabrik und Konstruktionslogistik beschleunigen die Baureihe.</p></div><span class="sector-label">${formatNumber(fieldUsage())} / ${formatNumber(activePlanet().fields)} FELDER · BAUTEMPO ${constructionSpeedFactor().toFixed(2)}×${queueEnd ? ` · FERTIG ${formatDateTime(queueEnd)}` : ""}</span></section>${queuePanel("building")}<div class="grid two-column">${makeGroup("Ökonomie", economy)}${makeGroup("Infrastruktur", infrastructure)}</div>`;
 }
 function researchView() {
-  return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Das Labor der aktiven Welt bestimmt Voraussetzungen und Tempo.</p></div><span class="sector-label">LABOR STUFE ${planetBuildings().researchLab}</span></section>${queueOverview()}<section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, projectedResearchLevel(key) + 1); return entityCard("research", key, config, level, cost, config.requires(planetState()), "research"); }).join("")}</section>`;
+  return `<section class="view-heading"><div><span class="eyebrow">FORSCHUNGSNETZWERK</span><h1>Technologien, die eine Kolonie tragen.</h1><p>Forschung läuft parallel zum Gebäudebau. Das Labor der aktiven Welt bestimmt Voraussetzungen und Tempo.</p></div><span class="sector-label">LABOR STUFE ${planetBuildings().researchLab}</span></section>${queuePanel("research")}<section class="entity-list">${Object.entries(RESEARCH).map(([key, config]) => { const level = state.research[key]; const cost = getCost(config, projectedResearchLevel(key) + 1); return entityCard("research", key, config, level, cost, config.requires(planetState()), "research"); }).join("")}</section>`;
 }
 function shipCard(key, ship) {
   const queue = shipQueue();
@@ -1209,7 +1216,7 @@ function defenseView() {
 function shipyardView() {
   const deployed = state.missions.reduce((total, mission) => total + Object.values(mission.fleet).reduce((sum, count) => sum + count, 0), 0);
   const ships = SHIPYARD_ORDER.map((key) => [key, SHIPS[key]]).filter(([, ship]) => ship && !ship.isDefense);
-  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Spezialschiffe, Frachter und Kampfschiffe sind nach Baugruppe geordnet. Jede planetare Werft arbeitet mit eigener Warteschlange.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section>${queueOverview()}<section class="entity-list">${ships.map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
+  return `<section class="view-heading"><div><span class="eyebrow">ORBITALWERFT</span><h1>Flotten für den Grenzraum.</h1><p>Spezialschiffe, Frachter und Kampfschiffe sind nach Baugruppe geordnet. Jede planetare Werft arbeitet mit eigener Warteschlange.</p></div><span class="sector-label">IM EINSATZ ${deployed}</span></section>${queuePanel("ship")}<section class="entity-list">${ships.map(([key, ship]) => shipCard(key, ship)).join("")}</section><div class="tip" style="margin-top:15px"><b>Kampfsystem</b><span>Die Werte jeder Schiffsklasse gelten für planetare Angriffe. Avionik erhöht die Stärke um 8 % pro Stufe. Deine Flotte stellst du nach Auswahl einer fremden Welt zusammen.</span></div>`;
 }
 function missionStatusMarkup(onlyEvents = false) {
   const allMissions = onlyEvents ? state.eventFlights : [...state.missions, ...state.pvpFlights, ...state.eventFlights];
