@@ -1,8 +1,13 @@
 import { DAILY_GOALS, progression } from "./progression.js?v=20261103";
 import { FLEET, DEFENSE, shipCargo, fleetCapacity, flightFuel, SPEED_START_AT, WORLD_SPEED, worldSpeedAt } from "./units.js?v=20261103-cargo-fuel-1";
 import { simulateBattle } from "./combat.js?v=20261103-cargo-fuel-1";
-import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261115-events-2";
+import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261123-playable-demo";
 const IS_DEMO = location.pathname === "/demo";
+const DEMO_ACTIONS = new Set([
+  "planetStep", "signalId", "orbitTarget", "mapAction", "sensorFocus", "systemStep",
+  "planetId", "openGalaxy", "fleetFilter", "simulate", "simReset", "simReport",
+  "viewJump", "build", "buildBatch", "cancelBuilding", "research", "ship",
+]);
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const content = $("#content");
@@ -1804,8 +1809,10 @@ function render({ live = false } = {}) {
   const messageNav = document.querySelector('#nav [data-view="messages"]');
   if (messageNav) messageNav.innerHTML = `<span>✉</span> Nachrichten${unreadCount ? ` (${unreadCount})` : ""}`;
   if (IS_DEMO) {
-    if (!content.querySelector(".demo-banner")) content.insertAdjacentHTML("afterbegin",'<div class="demo-banner"><strong>DEMO · Beispielimperium</strong><span>Nur ansehen · Kein echter Spielstand · Keine Speicherung</span><a href="/">Eigenes Imperium starten →</a></div>');
-    content.querySelectorAll("[data-build],[data-build-batch],[data-research],[data-ship],[data-mission],[data-colonize],[data-spy-target],[data-raid-target],[data-start-transfer]").forEach(button=>button.disabled=true);
+    if (!content.querySelector(".demo-banner")) {
+      content.insertAdjacentHTML("afterbegin", '<div class="demo-banner"><strong>DEMO · Beispielimperium</strong><span>Baue, forsche und teste die Werft. Das Beispiel wird beim Neuladen zurückgesetzt.</span><button type="button" class="secondary-button" data-view-jump="buildings" data-focus-entity="metalMine">Erste Mine ausbauen →</button><a href="/">Eigenes Imperium starten →</a></div>');
+    }
+    content.querySelectorAll("[data-mission],[data-colonize],[data-spy-target],[data-raid-target],[data-start-transfer]").forEach(button => button.disabled = true);
   }
   translateDOM();
 }
@@ -1999,7 +2006,7 @@ content.addEventListener("change", event => {
   save({ quiet: true });
 });
 content.addEventListener("submit", event => {
-  if (IS_DEMO) { event.preventDefault(); toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return; }
+  if (IS_DEMO) { event.preventDefault(); toast("Für diese Aktion brauchst du einen Account."); return; }
   if (event.target.id === "mailbox-search-form") { event.preventDefault(); mailboxSearch = mailboxSearchDraft.trim(); mailboxSelection.clear(); render(); }
   if (event.target.id === "message-compose") { event.preventDefault(); sendPlayerMessage(event.target); }
   if (event.target.id === "player-search-form") { event.preventDefault(); const query = String(new FormData(event.target).get("query") || "").trim(); if (query.length < 3) { toast("Bitte mindestens drei Zeichen eingeben.", true); return; } searchPlayers(query); }
@@ -2041,8 +2048,9 @@ content.addEventListener("wheel", event => {
 content.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || button.disabled) return;
-  if (IS_DEMO && !["planetStep","signalId","orbitTarget","mapAction","sensorFocus","planetId","openGalaxy","fleetFilter","simulate","simReset","simReport"].some(key=>button.dataset[key]!==undefined)) {
-    toast("Die Demo ist schreibgeschützt. Erstelle einen Account, um zu spielen."); return;
+  if (IS_DEMO && !Object.keys(button.dataset).some(key => DEMO_ACTIONS.has(key))) {
+    toast("Für diese Aktion brauchst du einen Account.");
+    return;
   }
   if (button.dataset.eventHarvest) { launchGalaxyEvent("harvest", button.dataset.eventHarvest); return; }
   if (button.dataset.eventBoss) { launchGalaxyEvent("boss", button.dataset.eventBoss); return; }

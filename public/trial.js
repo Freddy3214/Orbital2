@@ -29,7 +29,7 @@ function render() {
     <div class="trial-resources"><span>▰ ${copy('Metall', 'Metal')} <b>${stage >= 1 ? '99.500' : '100.000'}</b></span><span>◆ ${copy('Kristall', 'Crystal')} <b>${stage >= 1 ? '99.750' : '100.000'}</b></span><span>◉ Tritium <b>${stage >= 3 ? '99.900' : '100.000'}</b></span></div>
     <ol class="trial-steps">${steps.map((label, index) => `<li class="${index < stage ? 'done' : index === stage ? 'current' : ''}"><span>${index < stage ? '✓' : index + 1}</span>${label}</li>`).join('')}</ol>
     ${stage < 3 ? `<p class="trial-description">${descriptions[stage]}</p><button type="button" class="primary-button trial-action" data-trial-action ${busy ? 'disabled' : ''}>${busy ? copy('Befehl läuft …', 'Order in progress …') : steps[stage] + ' →'}</button>` : `<p class="trial-description">${copy('Jetzt kannst du mit einer eigenen Welt beginnen. Dein Startpaket: 100.000 Rohstoffe je Sorte und zwei Stunden Bauboost.', 'Start your own world now. Your starter pack: 100,000 of each resource and a two-hour building boost.')}</p><button type="button" class="primary-button trial-action" data-trial-register>${copy('Echten Account erstellen →', 'Create a real account →')}</button>`}
-    <div class="trial-foot"><a href="/demo">${copy('Vollständige Spielansicht ansehen', 'View the full game interface')} →</a><span>${Math.min(stage + 1, 3)} / 3</span></div>
+    <div class="trial-foot"><a href="/demo">${copy('Ausbau in der Spieloberfläche ausprobieren', 'Try building in the full game interface')} →</a><span>${Math.min(stage + 1, 3)} / 3</span></div>
   </div>`;
 }
 launch?.addEventListener('click', () => {
