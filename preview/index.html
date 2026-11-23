@@ -29,6 +29,23 @@
     data-register-url="https://orbital-foundry-game.onrender.com/?from=demo&amp;utm_source=fast_preview&amp;utm_medium=preview#commander-input"></dialog>
   <script type="module">
     const incoming = new URLSearchParams(location.search);
+    const preferredLanguage = incoming.get('lang') || navigator.language;
+    const english = preferredLanguage?.toLowerCase().startsWith('en');
+    if (english) {
+      document.documentElement.lang = 'en';
+      document.title = 'Orbital Foundry · Short Mission';
+      const text = {
+        'main > p:not(.note)': 'Build a mine, scout a star system and send a transport fleet. The free short mission runs right in your browser.',
+        '#trial-button': 'Play a short mission · no account →',
+        'main nav a:first-child': 'Create a free account',
+        'main nav a:last-child': 'Open the playable demo',
+        '.note': 'The short mission is a simulation. The separate multiplayer server may take a moment to load.',
+      };
+      for (const [selector, translation] of Object.entries(text)) {
+        document.querySelector(selector).textContent = translation;
+      }
+      document.getElementById('trial-dialog').setAttribute('aria-label', 'Orbital Foundry short mission');
+    }
     const campaignKeys = ['utm_source', 'utm_medium', 'utm_campaign'];
     function carryCampaign(destination) {
       const url = new URL(destination);
@@ -38,6 +55,7 @@
           url.searchParams.set(key, value);
         }
       }
+      if (english) url.searchParams.set('lang', 'en');
       return url.href;
     }
 
