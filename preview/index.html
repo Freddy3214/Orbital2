@@ -27,6 +27,27 @@
   <dialog id="trial-dialog" class="trial-dialog" aria-label="Orbital Foundry Kurzmission"
     data-demo-url="https://orbital-foundry-game.onrender.com/demo?utm_source=fast_preview&amp;utm_medium=preview"
     data-register-url="https://orbital-foundry-game.onrender.com/?from=demo&amp;utm_source=fast_preview&amp;utm_medium=preview#commander-input"></dialog>
+  <script type="module">
+    const incoming = new URLSearchParams(location.search);
+    const campaignKeys = ['utm_source', 'utm_medium', 'utm_campaign'];
+    function carryCampaign(destination) {
+      const url = new URL(destination);
+      for (const key of campaignKeys) {
+        const value = incoming.get(key)?.toLowerCase().trim();
+        if (value && /^[a-z0-9][a-z0-9_.-]{0,47}$/.test(value)) {
+          url.searchParams.set(key, value);
+        }
+      }
+      return url.href;
+    }
+
+    for (const link of document.querySelectorAll('main nav a')) {
+      link.href = carryCampaign(link.href);
+    }
+    const dialog = document.getElementById('trial-dialog');
+    dialog.dataset.demoUrl = carryCampaign(dialog.dataset.demoUrl);
+    dialog.dataset.registerUrl = carryCampaign(dialog.dataset.registerUrl);
+  </script>
   <script type="module" src="./trial.js"></script>
 </body>
 </html>
