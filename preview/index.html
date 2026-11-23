@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Teste Orbital Foundry in einer kurzen Weltraummission direkt im Browser. Kostenlos und ohne Account.">
+  <meta property="og:title" content="Orbital Foundry · Kurzmission">
+  <meta property="og:description" content="Baue eine Mine, erkunde ein Sternensystem und sende eine Transportflotte.">
+  <meta name="theme-color" content="#101925">
+  <title>Orbital Foundry · Kurzmission</title>
+  <link rel="icon" href="./app-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./trial.css">
+</head>
+<body>
+  <main>
+    <img class="world" src="./planet-temperate.svg" alt="" width="480" height="280">
+    <h1>Orbital Foundry</h1>
+    <p>Baue eine Mine, erkunde ein Sternensystem und sende eine Transportflotte. Die kostenlose Kurzmission läuft direkt im Browser.</p>
+    <button id="trial-button" class="primary-button" type="button">Kurzmission spielen · ohne Account →</button>
+    <nav aria-label="Orbital Foundry">
+      <a href="https://orbital-foundry-game.onrender.com/?utm_source=fast_preview&amp;utm_medium=preview">Eigene Kolonie gründen</a>
+      <a href="https://orbital-foundry-game.onrender.com/demo?utm_source=fast_preview&amp;utm_medium=preview">Spielbare Demo öffnen</a>
+    </nav>
+    <p class="note">Die Kurzmission ist eine Simulation. Der Multiplayer läuft auf einem separaten Spielserver, der beim Öffnen kurz laden kann.</p>
+  </main>
+  <dialog id="trial-dialog" class="trial-dialog" aria-label="Orbital Foundry Kurzmission"
+    data-demo-url="https://orbital-foundry-game.onrender.com/demo?utm_source=fast_preview&amp;utm_medium=preview"
+    data-register-url="https://orbital-foundry-game.onrender.com/?utm_source=fast_preview&amp;utm_medium=preview"></dialog>
+  <script type="module" src="./trial.js"></script>
+</body>
+</html>
