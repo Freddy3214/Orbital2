@@ -1,0 +1,53 @@
+name: Public playtest smoke check
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/playtest-smoke.yml']
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  public-playtest:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'codex/playtest-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Verify the public preview and read aggregate game activity
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          const preview = 'https://orbital-foundry-preview.onrender.com';
+          const game = 'https://orbital-foundry-game.onrender.com';
+          async function get(url, timeout = 20_000) {
+            const response = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+            assert.equal(response.status, 200, url);
+            return response;
+          }
+          const [page, script] = await Promise.all([get(preview), get(preview + '/trial.js')]);
+          assert.match(await page.text(), /id="trial-button"/);
+          assert.match(await script.text(), /trial_finish/);
+          console.log('Static preview HTML and mission JavaScript are publicly reachable.');
+          const health = await get(game + '/health', 105_000);
+          const contentType = health.headers.get('content-type') || '';
+          assert.match(contentType, /json/);
+          const [expedition, summary] = await Promise.all([
+            get(game + '/expedition.html'),
+            get(game + '/api/analytics/summary?days=7'),
+          ]);
+          assert.match(await expedition.text(), /Erste Kolonie/);
+          const report = await summary.json();
+          assert.ok(Number.isInteger(report.weeklyActivePlayers));
+          const sources = Object.fromEntries((report.sources || []).slice(0, 8).map(item => [item.source, item.visits]));
+          console.log(JSON.stringify({
+            activeIn7Days: report.weeklyActivePlayers,
+            accounts: report.totalAccounts,
+            signupsIn7Days: report.signups,
+            visitsIn7Days: report.visits,
+            demoOpens: report.funnel?.demo_open,
+            demoOrders: report.funnel?.demo_order,
+            registrationAttempts: report.funnel?.register_submit,
+            sources,
+          }));
+          JS
