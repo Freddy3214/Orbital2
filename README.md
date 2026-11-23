@@ -2,9 +2,11 @@
 
 **Free browser space-strategy alpha · English / Deutsch · No download**
 
-[Play free](https://orbital-foundry-game.onrender.com/?lang=en&utm_source=github&utm_medium=readme) · [Explore the account-free demo](https://orbital-foundry-game.onrender.com/demo?lang=en) · [Game overview & press information](https://orbital-foundry-game.onrender.com/discover.html)
+[Play free](https://orbital-foundry-game.onrender.com/?lang=en&utm_source=github&utm_medium=readme) · [Play the demo without an account](https://orbital-foundry-game.onrender.com/demo?lang=en&utm_source=github&utm_medium=readme) · [Game overview & press information](https://orbital-foundry-game.onrender.com/discover.html)
 
-Build colonies, research technologies and command fleets. Try cargo missions, scouting, timed attacks and six clearly identified NPC factions. This small indie alpha is looking for early players and constructive feedback — it is not a finished, large-scale competitive MMO. A free account is required for saved gameplay; the demo is a read-only tour. Free hosting can mean a slow first load.
+Build colonies, research technologies and command fleets. Try cargo missions, scouting, timed attacks and six clearly identified NPC factions. This small indie alpha is looking for early players and constructive feedback — it is not a finished, large-scale competitive MMO. The playable demo lets you build, research and try the shipyard. It resets on reload. Saved multiplayer play requires a free account.
+
+**Kurzer Einstieg auf Deutsch:** [Kurzmission sofort spielen](https://orbital-foundry-preview.onrender.com/) · [Testrunde „Erste Kolonie“ am 28.–29. November](https://orbital-foundry-game.onrender.com/expedition.html?utm_source=github&utm_medium=readme&utm_campaign=first_colony)
 
 ![Orbital Foundry space battle](public/assets/login-battle-v1.webp)
 
