@@ -5,7 +5,7 @@ import { atomicJsonWriter } from './storage.mjs';
 
 const DAY = 86_400_000;
 const RETENTION_DAYS = 90;
-const FUNNEL_EVENTS = new Set(['trial_start', 'trial_finish', 'demo_open', 'register_submit', 'signup_success']);
+const FUNNEL_EVENTS = new Set(['trial_start', 'trial_finish', 'demo_open', 'demo_order', 'register_submit', 'signup_success']);
 const dateKey = at => new Date(at).toISOString().slice(0, 10);
 const clean = (value, fallback = '') => {
   const text = String(value ?? '').trim().toLowerCase().slice(0, 48);

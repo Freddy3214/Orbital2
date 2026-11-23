@@ -14,6 +14,7 @@ async function refresh() {
     $('funnel-trial-start').textContent = number(data.funnel?.trial_start || 0);
     $('funnel-trial-finish').textContent = number(data.funnel?.trial_finish || 0);
     $('funnel-demo').textContent = number(data.funnel?.demo_open || 0);
+    $('funnel-demo-order').textContent = number(data.funnel?.demo_order || 0);
     $('funnel-register').textContent = number(data.funnel?.register_submit || 0);
     $('sources').replaceChildren();
     for (const item of data.sources) {

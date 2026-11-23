@@ -1817,6 +1817,13 @@ function render({ live = false } = {}) {
   translateDOM();
 }
 
+let demoOrderTracked = false;
+function recordDemoOrder() {
+  if (!IS_DEMO || demoOrderTracked) return;
+  demoOrderTracked = true;
+  window.orbitalTrack?.("demo_order");
+}
+
 function startBuilding(key, amount = 1) {
   synchronize();
   const config = BUILDINGS[key];
@@ -1833,6 +1840,7 @@ function startBuilding(key, amount = 1) {
     added += 1;
   }
   if (!added) return;
+  recordDemoOrder();
   activateNextBuilding(Date.now());
   const plural = added > 1 ? ` (${added} Ausbauten)` : "";
   addLog("system", `${config.name} in die Baureihe aufgenommen${plural}.`);
@@ -1873,6 +1881,7 @@ function startResearch(key) {
   const startedAt = Date.now();
   state.queues.researchWaiting.push({ key, targetLevel: level + 1, cost, planetId: activePlanet().id });
   activateNextOrders(startedAt);
+  recordDemoOrder();
   addLog("system", `${config.name} auf Stufe ${level + 1} angestoßen.`);
   toast(`${config.name} wird erforscht.`);
   render();
@@ -1887,6 +1896,7 @@ function startShip(key) {
   activePlanet().shipWaiting ??= [];
   activePlanet().shipWaiting.push({ key, amount: 1, cost: ship.cost, planetId: activePlanet().id });
   activateNextOrders(startedAt);
+  recordDemoOrder();
   addLog("system", `${ship.name} in der Orbitalwerft in Auftrag gegeben.`);
   toast(`${ship.name} wird montiert.`);
   render();
