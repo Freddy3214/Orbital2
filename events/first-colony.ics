@@ -1,0 +1,14 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Orbital Foundry//First Colony//EN
+CALSCALE:GREGORIAN
+BEGIN:VEVENT
+UID:first-colony-20261128@orbital-foundry-game.onrender.com
+DTSTAMP:20261124T002000Z
+DTSTART;VALUE=DATE:20261128
+DTEND;VALUE=DATE:20261130
+SUMMARY:Orbital Foundry - Erste Kolonie / First Colony
+DESCRIPTION:Offene Testrunde im Browser.\nOpen browser-game playtest.
+URL:https://orbital-foundry-game.onrender.com/expedition.html
+END:VEVENT
+END:VCALENDAR
