@@ -990,11 +990,37 @@ async function enterGame(name, password) {
   }
 }
 async function restoreSession() {
+  let demoStatus;
+  let updateDemoStatus;
+  if (IS_DEMO) {
+    const english = locale().startsWith("en");
+    const fallback = new URL("https://orbital-foundry-preview.onrender.com/");
+    const campaign = new URLSearchParams(location.search);
+    for (const key of ["utm_source", "utm_medium", "utm_campaign"]) {
+      if (campaign.has(key)) fallback.searchParams.set(key, campaign.get(key));
+    }
+    fallback.searchParams.set("lang", english ? "en" : "de");
+    demoStatus = document.createElement("section");
+    demoStatus.className = "gate-start-bonus";
+    const message = document.createElement("strong");
+    message.setAttribute("role", "status");
+    message.textContent = english ? "Loading the playable demo…" : "Spielbare Demo wird geladen …";
+    const link = document.createElement("a");
+    link.className = "gate-demo-link";
+    link.href = fallback.href;
+    link.textContent = english ? "Play the instant short mission instead →" : "Zur sofort spielbaren Kurzmission →";
+    demoStatus.append(message, link);
+    $("#commander-gate .gate-card").prepend(demoStatus);
+    updateDemoStatus = () => {
+      message.textContent = english ? "The game demo could not load." : "Die Spieldemo konnte nicht geladen werden.";
+    };
+  }
   try {
     const response = await fetch(IS_DEMO ? "/api/demo" : "/api/session", { credentials: "same-origin" });
-    if (!response.ok) return;
+    if (!response.ok) { updateDemoStatus?.(); return; }
     openGame(await response.json());
-  } catch { /* The access screen remains visible if the server is unavailable. */ }
+    demoStatus?.remove();
+  } catch { updateDemoStatus?.(); }
   finally { document.dispatchEvent(new Event("orbital-session-restored")); }
 }
 async function logout() {
