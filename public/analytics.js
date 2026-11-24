@@ -67,5 +67,4 @@ window.orbitalTrack = async event => {
     });
   } catch { /* Analytics must never interrupt the game. */ }
 };
-if (location.pathname === '/demo') window.orbitalTrack('demo_open');
 visitRequest.finally(showCounts);
