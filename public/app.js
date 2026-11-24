@@ -3,6 +3,7 @@ import { FLEET, DEFENSE, shipCargo, fleetCapacity, flightFuel, SPEED_START_AT, W
 import { simulateBattle } from "./combat.js?v=20261103-cargo-fuel-1";
 import { initLanguage, translateText, translateDOM, setProtectedTexts, locale } from "./i18n.js?v=20261124-entry";
 const IS_DEMO = location.pathname === "/demo";
+const DEMO_MINE_START = IS_DEMO && new URLSearchParams(location.search).get("start") === "mine";
 const FROM_DEMO = new URLSearchParams(location.search).get("from") === "demo";
 const DEMO_ACTIONS = new Set([
   "planetStep", "signalId", "orbitTarget", "mapAction", "sensorFocus", "systemStep",
@@ -233,7 +234,7 @@ const MISSIONS = {
 };
 
 let state = null;
-let activeView = "overview";
+let activeView = DEMO_MINE_START ? "buildings" : "overview";
 let leaderboard = [];
 let saveTimer = null;
 let lastAutoSave = Date.now();
@@ -949,6 +950,9 @@ function openGame(payload) {
   $("#app").classList.remove("is-hidden");
   render();
   if (IS_DEMO) window.orbitalTrack?.("demo_open");
+  if (DEMO_MINE_START) {
+    content.querySelector(".entity-card--metalMine")?.scrollIntoView({ block: "center", behavior: "instant" });
+  }
   fetchLeaderboard();
   save({ quiet: true });
   if (!IS_DEMO && Date.now() - awaySince >= 300000) {
