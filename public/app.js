@@ -948,6 +948,7 @@ function openGame(payload) {
   $("#commander-gate").classList.add("hidden");
   $("#app").classList.remove("is-hidden");
   render();
+  if (IS_DEMO) window.orbitalTrack?.("demo_open");
   fetchLeaderboard();
   save({ quiet: true });
   if (!IS_DEMO && Date.now() - awaySince >= 300000) {
